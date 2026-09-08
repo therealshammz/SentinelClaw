@@ -2,7 +2,13 @@ import argparse
 import json
 from datetime import timezone
 
-import win32evtlog
+# Conditionally import win32evtlog to avoid ImportError on non-Windows systems
+try:
+    import win32evtlog
+    HAS_WIN32EVTLOG = True
+except ImportError:
+    win32evtlog = None
+    HAS_WIN32EVTLOG = False
 
 
 DEFAULT_EVENT_IDS = {
@@ -36,6 +42,10 @@ def get_windows_events(
     max_events: int = 200,
     event_ids: set[int] | None = None,
 ) -> list[dict]:
+    if not HAS_WIN32EVTLOG:
+        # Return empty list on non-Windows systems where win32evtlog is not available
+        return []
+
     if event_ids is None:
         event_ids = set(DEFAULT_EVENT_IDS.keys())
 
