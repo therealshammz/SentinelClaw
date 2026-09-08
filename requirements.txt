@@ -1,0 +1,5 @@
+psutil>=6.0.0
+pytest>=8.0.0
+pywin32>=311
+PyYAML>=6.0.2
+scapy>=2.6.0

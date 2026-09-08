@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinelclaw"
+version = "0.1.0"
+description = "Local defensive cybersecurity analysis CLI with optional local AI assistance."
+readme = "README.md"
+requires-python = ">=3.11"
+
+authors = [
+    { name = "SentinelClaw Contributors" }
+]
+
+dependencies = [
+    "psutil>=6.0.0",
+    "pywin32>=311; platform_system == 'Windows'",
+    "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+pcap = [
+    "scapy>=2.6.0",
+]
+
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+sentinelclaw = "sentinelclaw.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sentinelclaw*"]
+
+[tool.setuptools.package-data]
+sentinelclaw = [
+    "rules/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"

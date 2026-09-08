@@ -1,0 +1,89 @@
+rules:
+  - id: FILE-YAML-001
+    title: High entropy PE file
+    description: A PE executable has unusually high byte entropy.
+    category: file
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Defense Evasion
+      technique: T1027
+      name: Obfuscated or Compressed Files and Information
+
+    conditions:
+      - field: is_pe_file
+        operator: equals
+        value: true
+
+      - field: entropy
+        operator: greater_or_equal
+        value: 7.2
+
+  - id: FILE-YAML-002
+    title: Unsigned PE file
+    description: The analyzed PE executable does not have a valid Authenticode signature.
+    category: file
+    severity: low
+    confidence: low
+    enabled: true
+    match: all
+
+    conditions:
+      - field: is_pe_file
+        operator: equals
+        value: true
+
+      - field: authenticode.status
+        operator: equals
+        value:
+          - NotSigned
+          - HashMismatch
+          - NotTrusted
+
+  - id: FILE-YAML-003
+    title: Executable stored in temporary directory
+    description: The analyzed executable is stored in a commonly writable temporary directory.
+    category: file
+    severity: low
+    confidence: low
+    enabled: true
+    match: all
+
+    conditions:
+      - field: extension
+        operator: equals
+        value:
+          - .exe
+          - .dll
+          - .scr
+          - .com
+
+      - field: path
+        operator: contains
+        value:
+          - "\\temp\\"
+          - "\\appdata\\local\\temp\\"
+
+  - id: FILE-YAML-004
+    title: Suspicious executable double extension
+    description: The filename may be disguising an executable behind a document or image extension.
+    category: file
+    severity: high
+    confidence: high
+    enabled: true
+    match: any
+
+    conditions:
+      - field: name
+        operator: endswith
+        value:
+          - .pdf.exe
+          - .doc.exe
+          - .docx.exe
+          - .jpg.exe
+          - .jpeg.exe
+          - .png.exe
+          - .txt.exe

@@ -1,0 +1,133 @@
+rules:
+  - id: PROC-YAML-001
+    title: Encoded PowerShell execution
+    description: PowerShell appears to be using encoded command execution.
+    category: process
+    severity: high
+    confidence: high
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Execution
+      technique: T1059.001
+      name: PowerShell
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - powershell.exe
+          - pwsh.exe
+
+      - field: command_line
+        operator: contains
+        value:
+          - "-encodedcommand"
+          - "-enc"
+
+  - id: PROC-YAML-002
+    title: PowerShell download behavior
+    description: PowerShell command line contains common download-related keywords.
+    category: process
+    severity: high
+    confidence: medium
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Command and Control
+      technique: T1105
+      name: Ingress Tool Transfer
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - powershell.exe
+          - pwsh.exe
+
+      - field: command_line
+        operator: contains
+        value:
+          - invoke-webrequest
+          - downloadstring
+          - net.webclient
+          - "iwr "
+
+  - id: PROC-YAML-003
+    title: Office application spawned PowerShell
+    description: An Office process spawned a PowerShell interpreter.
+    category: process
+    severity: high
+    confidence: high
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Execution
+      technique: T1204.002
+      name: Malicious File
+
+    conditions:
+      - field: parent_name
+        operator: equals
+        value:
+          - winword.exe
+          - excel.exe
+          - powerpnt.exe
+          - outlook.exe
+
+      - field: name
+        operator: equals
+        value:
+          - powershell.exe
+          - pwsh.exe
+
+  - id: PROC-YAML-004
+    title: MSHTA remote execution
+    description: MSHTA appears to be loading remote content.
+    category: process
+    severity: high
+    confidence: high
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Defense Evasion
+      technique: T1218.005
+      name: Mshta
+
+    conditions:
+      - field: name
+        operator: equals
+        value: mshta.exe
+
+      - field: command_line
+        operator: contains
+        value:
+          - "http://"
+          - "https://"
+          - "javascript:"
+          - "vbscript:"
+
+  - id: PROC-YAML-005
+    title: Executable launched from temporary directory
+    description: A running executable is located in a temporary directory.
+    category: process
+    severity: low
+    confidence: low
+    enabled: true
+    match: any
+
+    mitre:
+      tactic: Execution
+      technique: T1204
+      name: User Execution
+
+    conditions:
+      - field: executable
+        operator: contains
+        value:
+          - "\\temp\\"
+          - "\\appdata\\local\\temp\\"

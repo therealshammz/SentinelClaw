@@ -1,0 +1,76 @@
+rules:
+  - id: WIN-YAML-001
+    title: Windows audit log cleared
+    description: The Windows Security audit log was cleared.
+    category: windows_event
+    severity: high
+    confidence: high
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Defense Evasion
+      technique: T1070.001
+      name: Clear Windows Event Logs
+
+    conditions:
+      - field: event_id
+        operator: equals
+        value: 1102
+
+  - id: WIN-YAML-002
+    title: Windows service installed
+    description: Windows recorded installation of a new system service.
+    category: windows_event
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Persistence
+      technique: T1543.003
+      name: Windows Service
+
+    conditions:
+      - field: event_id
+        operator: equals
+        value: 4697
+
+  - id: WIN-YAML-003
+    title: New Windows account created
+    description: A new local or domain user account was created.
+    category: windows_event
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Persistence
+      technique: T1136
+      name: Create Account
+
+    conditions:
+      - field: event_id
+        operator: equals
+        value: 4720
+
+  - id: WIN-YAML-004
+    title: User added to local group
+    description: A Windows user was added to a local security group.
+    category: windows_event
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+
+    mitre:
+      tactic: Persistence
+      technique: T1098
+      name: Account Manipulation
+
+    conditions:
+      - field: event_id
+        operator: equals
+        value: 4732
