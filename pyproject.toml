@@ -42,6 +42,9 @@ dev = [
 [project.scripts]
 sentinelclaw = "sentinelclaw.main:main"
 
+[project.entry-points."sentinelclaw.detectors"]
+sample = "sentinelclaw.plugins.sample_detector"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sentinelclaw*"]
@@ -75,13 +78,6 @@ files = ["sentinelclaw"]
 ignore_missing_imports = true
 warn_unused_ignores = false
 warn_return_any = false
-
-# main.py is CLI plumbing typed in a later upgrade round; two harmless
-# mypy inference artifacts remain (collector_status dict[str, None] narrowing
-# and the formats tuple join). Remove this override once main.py is typed.
-[[tool.mypy.overrides]]
-module = "sentinelclaw.main"
-disable_error_code = ["assignment", "misc"]
 
 [tool.coverage.run]
 source = ["sentinelclaw"]
