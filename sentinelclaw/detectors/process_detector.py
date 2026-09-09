@@ -132,7 +132,7 @@ def analyze_processes(
     processes: list[dict],
 ) -> list[dict]:
 
-    findings = []
+    findings: list[dict] = []
 
     for process in processes:
 

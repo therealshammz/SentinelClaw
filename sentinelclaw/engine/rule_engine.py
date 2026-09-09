@@ -67,8 +67,8 @@ def normalize_string(value: Any) -> str:
 def get_nested_value(
     data: dict,
     field_path: str,
-):
-    current = data
+) -> Any:
+    current: Any = data
 
     for part in field_path.split("."):
         if not isinstance(current, dict):
@@ -172,7 +172,7 @@ def evaluate_condition(
         "operator",
         "equals",
     )
-    expected = condition.get("value")
+    expected: Any = condition.get("value")
 
     if not field:
         return False

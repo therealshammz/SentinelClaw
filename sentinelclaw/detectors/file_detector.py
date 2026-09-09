@@ -1,6 +1,3 @@
-from pathlib import Path
-
-
 EXECUTABLE_EXTENSIONS = {
     ".exe",
     ".dll",
@@ -42,7 +39,7 @@ def analyze_file_findings(
     file_info: dict,
 ) -> list[dict]:
 
-    findings = []
+    findings: list[dict] = []
 
     if "error" in file_info:
         return findings

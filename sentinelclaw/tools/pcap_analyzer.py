@@ -42,23 +42,23 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
             )
         }
 
-    protocol_counts = Counter()
-    ip_counts = Counter()
-    source_counts = Counter()
-    destination_counts = Counter()
-    destination_port_counts = Counter()
+    protocol_counts: Counter[str] = Counter()
+    ip_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
+    destination_counts: Counter[str] = Counter()
+    destination_port_counts: Counter[int] = Counter()
 
     tcp_port_targets = defaultdict(set)
     udp_port_targets = defaultdict(set)
 
-    flows = Counter()
+    flows: Counter[tuple[str, int | None, str, int | None, str]] = Counter()
 
     packets_total = 0
     tcp_packets = 0
     udp_packets = 0
     other_packets = 0
 
-    packet_samples = []
+    packet_samples: list[dict] = []
 
     try:
         with PcapReader(str(path)) as reader:

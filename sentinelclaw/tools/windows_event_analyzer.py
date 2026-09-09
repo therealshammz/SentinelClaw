@@ -49,7 +49,7 @@ def get_windows_events(
     if event_ids is None:
         event_ids = set(DEFAULT_EVENT_IDS.keys())
 
-    events = []
+    events: list[dict] = []
 
     handle = win32evtlog.OpenEventLog(None, log_name)
 

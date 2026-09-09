@@ -344,8 +344,8 @@ def merge_findings(
 def deduplicate_findings(
     findings: list[dict],
 ) -> list[dict]:
-    exact_seen = {}
-    exact_results = []
+    exact_seen: dict[tuple, int] = {}
+    exact_results: list[dict] = []
 
     for finding in findings:
         fingerprint = finding_fingerprint(
@@ -376,8 +376,8 @@ def deduplicate_findings(
                 )
             )
 
-    behavior_seen = {}
-    results = []
+    behavior_seen: dict[tuple, int] = {}
+    results: list[dict] = []
 
     for finding in exact_results:
         key = equivalent_behavior_key(

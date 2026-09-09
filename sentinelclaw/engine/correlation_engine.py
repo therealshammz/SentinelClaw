@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any
 
 from sentinelclaw.config.constants import SEVERITY_RANK
 
@@ -538,7 +537,7 @@ def correlate_mitre_chain(
             related_pids=[
                 finding.get(
                     "pid"
-                )
+                )  # type: ignore[misc]  # pid is an optional field on heterogeneous finding dicts
                 for finding in unique
                 if finding.get(
                     "pid"
@@ -548,7 +547,7 @@ def correlate_mitre_chain(
             related_ips=[
                 finding.get(
                     "remote_ip"
-                )
+                )  # type: ignore[misc]  # remote_ip is an optional field on heterogeneous finding dicts
                 for finding in unique
                 if finding.get(
                     "remote_ip"
