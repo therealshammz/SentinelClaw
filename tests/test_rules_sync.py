@@ -172,3 +172,46 @@ def test_sync_creates_missing_destination(
 
     assert result.returncode == 0
     assert (tmp_path / "packaged" / "a.yaml").exists()
+
+def test_check_and_sync_cover_nested_sigma_trees(
+    tmp_path,
+) -> None:
+    source = tmp_path / "rules"
+    destination = tmp_path / "packaged" / "rules"
+    source.mkdir()
+    destination.mkdir(parents=True)
+
+    (source / "sigma" / "windows").mkdir(parents=True)
+    (source / "sigma" / "windows" / "rule.yaml").write_text(
+        "rules: [nested]\n"
+    )
+
+    result = run_sync(
+        "--sync",
+        "--source",
+        str(source),
+        "--dest",
+        str(destination),
+    )
+
+    assert result.returncode == 0
+
+    copied = destination / "sigma" / "windows" / "rule.yaml"
+
+    assert copied.exists()
+    assert copied.read_text() == "rules: [nested]\n"
+
+    (source / "sigma" / "windows" / "rule.yaml").write_text(
+        "rules: [changed]\n"
+    )
+
+    check = run_sync(
+        "--check",
+        "--source",
+        str(source),
+        "--dest",
+        str(destination),
+    )
+
+    assert check.returncode == 1
+    assert "sigma/windows/rule.yaml" in check.stdout

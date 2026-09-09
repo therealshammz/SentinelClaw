@@ -4,6 +4,7 @@ import pytest
 
 from sentinelclaw.config.paths import get_rules_directory
 from sentinelclaw.engine.rule_engine import (
+    evaluate_rule,
     load_rule_file,
     load_rules_from_directory,
     run_rules,
@@ -565,13 +566,19 @@ def test_all_shipped_rules_load_and_validate() -> None:
         get_rules_directory()
     )
 
-    # The shipped rule set is OS-gated (P1-10): Linux loads the base
-    # rules plus the Linux-only process/auth/persistence rules, while
-    # other platforms load only the platform-agnostic rules.
+    # The shipped rule set is OS-gated (P1-10, P2-14): Linux loads the
+    # base rules plus the Linux-only process/auth/persistence rules and
+    # the Linux sigma sample; Windows loads the base rules plus the
+    # Windows-only and Windows-gated sigma samples; other platforms load
+    # only the platform-agnostic rules.
     if sys.platform.startswith(
         "linux"
     ):
-        expected = 19
+        expected = 20
+    elif sys.platform.startswith(
+        "win"
+    ):
+        expected = 16
     else:
         expected = 7
 
@@ -914,3 +921,346 @@ def test_all_shipped_rules_carry_quality_metadata() -> None:
     if sys.platform.startswith("linux"):
         assert "experimental" in statuses
 
+
+
+def group_rule(
+    rule_id: str,
+    node: dict,
+    category: str = "network",
+) -> dict:
+    return {
+        "id": rule_id,
+        "title": f"Rule {rule_id}",
+        "description": "Synthetic group/cidr/fieldref test rule.",
+        "category": category,
+        "severity": "medium",
+        "confidence": "medium",
+        "conditions": [node],
+    }
+
+
+def test_cidr_operator_matches_inside_network() -> None:
+    rule = group_rule(
+        "OP-CIDR-001",
+        {
+            "field": "remote_address.ip",
+            "operator": "cidr",
+            "value": "10.0.0.0/8",
+        },
+    )
+
+    findings = run_rules(
+        [rule],
+        [{"remote_address": {"ip": "10.1.2.3", "port": 80}}],
+        category="network",
+    )
+
+    assert len(findings) == 1
+
+
+def test_cidr_operator_rejects_outside_network() -> None:
+    rule = group_rule(
+        "OP-CIDR-002",
+        {
+            "field": "remote_address.ip",
+            "operator": "cidr",
+            "value": ["10.0.0.0/8", "192.168.0.0/16"],
+        },
+    )
+
+    assert (
+        run_rules(
+            [rule],
+            [{"remote_address": {"ip": "8.8.8.8", "port": 80}}],
+            category="network",
+        )
+        == []
+    )
+
+
+def test_cidr_operator_matches_any_list_network() -> None:
+    rule = group_rule(
+        "OP-CIDR-003",
+        {
+            "field": "remote_address.ip",
+            "operator": "cidr",
+            "value": ["10.0.0.0/8", "192.168.0.0/16"],
+        },
+    )
+
+    findings = run_rules(
+        [rule],
+        [{"remote_address": {"ip": "192.168.4.4", "port": 80}}],
+        category="network",
+    )
+
+    assert len(findings) == 1
+
+
+def test_cidr_operator_invalid_values_do_not_match() -> None:
+    rule = group_rule(
+        "OP-CIDR-004",
+        {
+            "field": "remote_address.ip",
+            "operator": "cidr",
+            "value": "not-a-network",
+        },
+    )
+
+    assert (
+        run_rules(
+            [rule],
+            [{"remote_address": {"ip": "10.1.2.3", "port": 80}}],
+            category="network",
+        )
+        == []
+    )
+
+
+def test_cidr_operator_absent_address_does_not_match() -> None:
+    rule = group_rule(
+        "OP-CIDR-005",
+        {
+            "field": "remote_address.ip",
+            "operator": "cidr",
+            "value": "10.0.0.0/8",
+        },
+    )
+
+    assert (
+        run_rules(
+            [rule],
+            [{"remote_address": None}],
+            category="network",
+        )
+        == []
+    )
+
+
+def test_fieldref_operator_matches_equal_sibling_field() -> None:
+    rule = group_rule(
+        "OP-FREF-001",
+        {
+            "field": "command_line",
+            "operator": "fieldref",
+            "value": "executable",
+        },
+        category="process",
+    )
+
+    findings = run_rules(
+        [rule],
+        [
+            {
+                "command_line": "C:\\tools\\run.exe",
+                "executable": "C:\\tools\\run.exe",
+            }
+        ],
+        category="process",
+    )
+
+    assert len(findings) == 1
+
+
+def test_fieldref_operator_rejects_different_sibling_field() -> None:
+    rule = group_rule(
+        "OP-FREF-002",
+        {
+            "field": "command_line",
+            "operator": "fieldref",
+            "value": "executable",
+        },
+        category="process",
+    )
+
+    assert (
+        run_rules(
+            [rule],
+            [
+                {
+                    "command_line": "C:\\tools\\run.exe",
+                    "executable": "C:\\other\\run.exe",
+                }
+            ],
+            category="process",
+        )
+        == []
+    )
+
+
+def test_fieldref_operator_missing_fields_do_not_match() -> None:
+    rule = group_rule(
+        "OP-FREF-003",
+        {
+            "field": "command_line",
+            "operator": "fieldref",
+            "value": "executable",
+        },
+        category="process",
+    )
+
+    assert (
+        run_rules(
+            [rule],
+            [{"name": "orphan.exe"}],
+            category="process",
+        )
+        == []
+    )
+
+
+def test_any_of_group_matches_when_any_child_matches() -> None:
+    rule = group_rule(
+        "GRP-ANY-001",
+        {
+            "any_of": [
+                {"field": "name", "operator": "equals", "value": "a.exe"},
+                {"field": "name", "operator": "equals", "value": "b.exe"},
+            ]
+        },
+        category="process",
+    )
+
+    assert evaluate_rule(rule, {"name": "b.exe"})
+    assert not evaluate_rule(rule, {"name": "c.exe"})
+
+
+def test_all_of_group_requires_every_child() -> None:
+    rule = group_rule(
+        "GRP-ALL-001",
+        {
+            "all_of": [
+                {"field": "name", "operator": "equals", "value": "a.exe"},
+                {"field": "pid", "operator": "equals", "value": 7},
+            ]
+        },
+        category="process",
+    )
+
+    assert evaluate_rule(rule, {"name": "a.exe", "pid": 7})
+    assert not evaluate_rule(rule, {"name": "a.exe", "pid": 8})
+
+
+def test_negated_group_inverts_child_result() -> None:
+    rule = group_rule(
+        "GRP-NEG-001",
+        {
+            "negated": True,
+            "all_of": [
+                {"field": "name", "operator": "equals", "value": "a.exe"},
+            ],
+        },
+        category="process",
+    )
+
+    assert not evaluate_rule(rule, {"name": "a.exe"})
+    assert evaluate_rule(rule, {"name": "b.exe"})
+
+
+def test_negated_atom_inverts_comparison() -> None:
+    rule = group_rule(
+        "GRP-NEG-002",
+        {
+            "negated": True,
+            "field": "name",
+            "operator": "equals",
+            "value": "a.exe",
+        },
+        category="process",
+    )
+
+    assert not evaluate_rule(rule, {"name": "a.exe"})
+    assert evaluate_rule(rule, {"name": "b.exe"})
+
+
+def test_nested_groups_compose() -> None:
+    rule = group_rule(
+        "GRP-NEST-001",
+        {
+            "all_of": [
+                {"field": "name", "operator": "equals", "value": "a.exe"},
+                {
+                    "any_of": [
+                        {"field": "pid", "operator": "equals", "value": 1},
+                        {"field": "pid", "operator": "equals", "value": 2},
+                    ]
+                },
+            ]
+        },
+        category="process",
+    )
+
+    assert evaluate_rule(rule, {"name": "a.exe", "pid": 2})
+    assert not evaluate_rule(rule, {"name": "a.exe", "pid": 3})
+
+
+def test_validate_accepts_cidr_and_fieldref_operators() -> None:
+    rule = single_condition_rule(
+        "OP-VALID-001",
+        "remote_address.ip",
+        "cidr",
+        "10.0.0.0/8",
+    )
+
+    rule["category"] = "network"
+
+    ok, reason = validate_rule(rule)
+
+    assert ok, reason
+
+
+def test_validate_rejects_group_without_children() -> None:
+    rule = single_condition_rule(
+        "GRP-BAD-001",
+        "name",
+        "equals",
+        "a",
+    )
+    rule["conditions"] = [{"any_of": []}]
+
+    ok, reason = validate_rule(rule)
+
+    assert not ok
+    assert "group children" in reason
+
+
+def test_validate_rejects_group_with_both_keys() -> None:
+    rule = single_condition_rule(
+        "GRP-BAD-002",
+        "name",
+        "equals",
+        "a",
+    )
+    rule["conditions"] = [
+        {
+            "any_of": [{"field": "name", "operator": "equals", "value": "a"}],
+            "all_of": [{"field": "name", "operator": "equals", "value": "a"}],
+        }
+    ]
+
+    ok, reason = validate_rule(rule)
+
+    assert not ok
+    assert "exactly one" in reason
+
+
+def test_validate_rejects_non_boolean_negated() -> None:
+    rule = single_condition_rule(
+        "GRP-BAD-003",
+        "name",
+        "equals",
+        "a",
+    )
+    rule["conditions"] = [
+        {
+            "negated": "yes",
+            "field": "name",
+            "operator": "equals",
+            "value": "a",
+        }
+    ]
+
+    ok, reason = validate_rule(rule)
+
+    assert not ok
+    assert "negated must be a boolean" in reason

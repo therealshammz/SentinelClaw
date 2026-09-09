@@ -1,3 +1,4 @@
+import ipaddress
 import logging
 import re
 import sys
@@ -26,6 +27,35 @@ SUPPORTED_OPERATORS = frozenset(
         "not_equals",
         "not_contains",
         "matches",
+        "cidr",
+        "fieldref",
+    }
+)
+
+# P2-14: condition nodes. In addition to the flat atom form (``field`` /
+# ``operator`` / ``value``), a condition entry may be a logical group:
+#
+#   - ``any_of: [<node>, ...]``   true when at least one child is true
+#   - ``all_of: [<node>, ...]``   true when every child is true
+#
+# Either group key may carry ``negated: true`` to invert the group, and
+# atom nodes may carry ``negated: true`` to invert a single comparison.
+# Groups nest recursively, which lets the Sigma reader express arbitrary
+# ``and``/``or``/``not`` detection conditions. Rules without any group
+# keys keep the legacy flat semantics unchanged.
+#
+# P2-14 also adds two operators used by the Sigma subset:
+#
+#   - ``cidr``     value is a CIDR string (or list of them); the actual
+#                  value is an IP string; matches when the IP is inside
+#                  any listed network.
+#   - ``fieldref`` value names another field on the same record; matches
+#                  when the two fields hold equal values (the Sigma
+#                  ``|fieldref`` modifier).
+GROUP_KEYS = frozenset(
+    {
+        "any_of",
+        "all_of",
     }
 )
 
@@ -233,10 +263,10 @@ def load_rules_from_directory(
 
     rule_files = [
         *sorted(
-            rule_directory.glob("*.yaml")
+            rule_directory.rglob("*.yaml")
         ),
         *sorted(
-            rule_directory.glob("*.yml")
+            rule_directory.rglob("*.yml")
         ),
     ]
 
@@ -470,6 +500,79 @@ def match_not_contains(
     )
 
 
+def match_cidr(
+    actual: Any,
+    expected: Any,
+) -> bool:
+    """Return whether an IP address falls inside one of the CIDR blocks.
+
+    ``actual`` is the address observed on the record (a string or an
+    object str() renders as an address); ``expected`` is a CIDR string
+    or a list of CIDR strings (any-of semantics, matching the engine's
+    list convention). Invalid networks or unparseable addresses simply
+    fail to match.
+    """
+    if actual is None:
+        return False
+
+    try:
+        address = ipaddress.ip_address(
+            str(actual).strip()
+        )
+    except ValueError:
+        return False
+
+    if isinstance(
+        expected,
+        list,
+    ):
+        networks = expected
+    else:
+        networks = [
+            expected
+        ]
+
+    for item in networks:
+        try:
+            network = ipaddress.ip_network(
+                str(item).strip(),
+                strict=False,
+            )
+        except ValueError as exc:
+            logger.debug(
+                "cidr: invalid network %r (%s)",
+                item,
+                exc,
+            )
+
+            continue
+
+        if address in network:
+            return True
+
+    return False
+
+
+def match_fieldref(
+    actual: Any,
+    referenced: Any,
+) -> bool:
+    """Return whether a field equals the value of another field.
+
+    Implements the Sigma ``|fieldref`` modifier: the condition's value
+    names a sibling field whose resolved value is compared (with the
+    usual normalized equality). A missing actual value never matches,
+    which keeps absent fields from equating to one another.
+    """
+    if actual is None or referenced is None:
+        return False
+
+    return match_equals(
+        actual,
+        referenced,
+    )
+
+
 def evaluate_condition(
     record: dict,
     condition: dict,
@@ -585,7 +688,64 @@ def evaluate_condition(
     if operator == "exists":
         return actual is not None
 
+    if operator == "cidr":
+        return match_cidr(
+            actual,
+            expected,
+        )
+
+    if operator == "fieldref":
+        return match_fieldref(
+            actual,
+            get_nested_value(
+                record,
+                str(expected),
+            ),
+        )
+
     return False
+
+
+def evaluate_condition_node(
+    record: dict,
+    node: Any,
+) -> bool:
+    """Evaluate one condition node (atom or any_of/all_of group).
+
+    Group keys nest recursively; every node type honors ``negated``.
+    """
+    if not isinstance(
+        node,
+        dict,
+    ):
+        return False
+
+    if "any_of" in node:
+        result = any(
+            evaluate_condition_node(
+                record,
+                child,
+            )
+            for child in node["any_of"]
+        )
+    elif "all_of" in node:
+        result = all(
+            evaluate_condition_node(
+                record,
+                child,
+            )
+            for child in node["all_of"]
+        )
+    else:
+        result = evaluate_condition(
+            record,
+            node,
+        )
+
+    if node.get("negated"):
+        return not result
+
+    return result
 
 
 def evaluate_rule(
@@ -609,7 +769,7 @@ def evaluate_rule(
     )
 
     results = [
-        evaluate_condition(
+        evaluate_condition_node(
             record,
             condition,
         )
@@ -688,6 +848,89 @@ def validate_condition(
     return (
         True,
         "",
+    )
+
+
+def validate_condition_node(
+    node: Any,
+) -> tuple[
+    bool,
+    str,
+]:
+    """Validate one condition node (atom or any_of/all_of group).
+
+    Atoms use :func:`validate_condition`; groups require exactly one of
+    ``any_of`` / ``all_of`` holding a non-empty list of valid child
+    nodes. Either form may carry an optional boolean ``negated``.
+    """
+    if not isinstance(
+        node,
+        dict,
+    ):
+        return (
+            False,
+            "condition must be a mapping",
+        )
+
+    negated = node.get(
+        "negated",
+        False,
+    )
+
+    if not isinstance(
+        negated,
+        bool,
+    ):
+        return (
+            False,
+            "negated must be a boolean",
+        )
+
+    has_any = "any_of" in node
+    has_all = "all_of" in node
+
+    if has_any or has_all:
+        if has_any == has_all:
+            return (
+                False,
+                "group condition needs exactly one of "
+                "'any_of' or 'all_of'",
+            )
+
+        group = node["any_of"] if has_any else node["all_of"]
+
+        if (
+            not isinstance(
+                group,
+                list,
+            )
+            or not group
+        ):
+            return (
+                False,
+                "group children must be a non-empty list",
+            )
+
+        for child_index, child in enumerate(
+            group
+        ):
+            valid, reason = validate_condition_node(
+                child
+            )
+
+            if not valid:
+                return (
+                    False,
+                    f"group child {child_index}: {reason}",
+                )
+
+        return (
+            True,
+            "",
+        )
+
+    return validate_condition(
+        node
     )
 
 
@@ -849,7 +1092,7 @@ def validate_rule(
     for index, condition in enumerate(
         conditions
     ):
-        valid, reason = validate_condition(
+        valid, reason = validate_condition_node(
             condition
         )
 

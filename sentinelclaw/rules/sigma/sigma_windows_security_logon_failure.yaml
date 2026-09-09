@@ -1,0 +1,33 @@
+rules:
+  - id: b9b42a9e-3c26-4f3a-8f4e-6b4c4d1e2f01
+    title: Windows logon failure (EventID 4625)
+    description: >-
+      A Windows Security logon failure event was recorded. Converted
+      from a Sigma logon_failure rule (sample shipped with the P2-14
+      sigma layer); repeated occurrences indicate brute-force or
+      password-spray activity.
+    category: windows_event
+    os:
+      - windows
+    severity: medium
+    confidence: medium
+    status: proven
+    enabled: true
+    falsepositives:
+      - Legitimate users mistyping passwords.
+      - Stale service accounts retrying logons.
+    author: SentinelClaw Sigma samples
+    date: "2026-09-09"
+    tags:
+      - attack.credential_access
+      - attack.t1110
+    mitre:
+      technique: T1110
+    sigma_logsource:
+      category: logon_failure
+      product: windows
+      service: security
+    conditions:
+      - field: event_id
+        operator: equals
+        value: 4625

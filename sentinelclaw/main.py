@@ -12,6 +12,8 @@ from sentinelclaw.ai.qwen_analyzer import analyze_report_with_qwen
 
 from sentinelclaw.config.logging import configure_logging
 
+from sentinelclaw.config.paths import PACKAGE_DIRECTORY
+
 from sentinelclaw.config.settings import get_settings
 
 from sentinelclaw.detectors.auth_detector import analyze_auth_events
@@ -38,6 +40,15 @@ from sentinelclaw.engine.timeline_engine import build_timeline
 from sentinelclaw.models.findings import calculate_risk_score
 
 from sentinelclaw.reporting.report_generator import save_report_formats
+
+from sentinelclaw.sigma.importer import (
+    SIGMA_RELEASE_TAG,
+    download_release_zip,
+    import_into,
+    prepare_source_directory,
+    release_tag_from_env,
+    tally_by_reason,
+)
 
 from sentinelclaw.tools.auth_log_analyzer import get_auth_events
 from sentinelclaw.tools.file_analyzer import analyze_file
@@ -101,6 +112,156 @@ def get_rules() -> list[dict]:
         raise RuntimeError(
             f"Unable to load detection rules: {exc}"
         ) from exc
+
+
+def rule_destination_directories(
+    cli_destination: str | None,
+) -> list[Path]:
+    """Return the rule directories a Sigma import writes into.
+
+    The primary destination is the resolved runtime rules directory (or
+    an explicit ``--dest``). When the runtime directory is the packaged
+    copy inside a repository checkout, the repo's sibling ``rules/``
+    directory receives the identical tree so the two shipped copies stay
+    in sync. Environment-overridden directories never trigger the
+    mirror (the override owns the layout).
+    """
+    settings = get_settings()
+
+    if cli_destination:
+        return [
+            Path(cli_destination).expanduser().resolve()
+        ]
+
+    primary = settings.resolved_rules_dir
+
+    destinations = [
+        primary
+    ]
+
+    packaged = PACKAGE_DIRECTORY / "rules"
+
+    repo_rules = PACKAGE_DIRECTORY.parent / "rules"
+
+    if (
+        primary == packaged
+        and repo_rules.is_dir()
+        and repo_rules.resolve() != packaged.resolve()
+    ):
+        destinations.append(
+            repo_rules.resolve()
+        )
+
+    return destinations
+
+
+def run_rules_import(args: argparse.Namespace) -> dict:
+    """Run the user-invoked SigmaHQ import (P2-14).
+
+    Downloads the pinned SigmaHQ release (unless ``--source`` names a
+    local checkout or zip), converts every supported rule into the
+    internal format, and writes identical copies into the destination
+    rule directories. No network access happens unless this command is
+    invoked without ``--source``.
+    """
+    import tempfile
+
+    release = (
+        args.release
+        if args.release
+        else release_tag_from_env()
+    )
+
+    destinations = rule_destination_directories(
+        args.dest
+    )
+
+    with tempfile.TemporaryDirectory(
+        prefix="sentinelclaw-sigma-"
+    ) as temporary:
+        work_directory = Path(temporary)
+
+        if args.source:
+            print(
+                f"[sigma] converting from local source: "
+                f"{args.source}"
+            )
+
+            sigma_rules_directory = prepare_source_directory(
+                Path(args.source).expanduser(),
+                work_directory,
+            )
+        else:
+            print(
+                f"[sigma] downloading SigmaHQ release "
+                f"{release}..."
+            )
+
+            archive = download_release_zip(
+                release,
+                work_directory / "sigma-release.zip",
+            )
+
+            sigma_rules_directory = prepare_source_directory(
+                archive,
+                work_directory,
+            )
+
+        summary = import_into(
+            sigma_rules_directory,
+            destinations,
+            refresh=True,
+        )
+
+    print()
+    print(
+        f"Imported Sigma rules: "
+        f"{summary.converted_count} converted, "
+        f"{summary.skipped_count} skipped"
+    )
+
+    if summary.skipped:
+        print()
+        print(
+            "Skip reasons (rule isolation; "
+            "see SUPPORTED_SUBSET.md):"
+        )
+
+        for reason, count in tally_by_reason(
+            summary.skipped
+        ):
+            print(
+                f"  - {reason}: {count}"
+            )
+
+    print()
+    print(
+        "Written to:"
+    )
+
+    for destination in destinations:
+        print(
+            f"  - {destination / 'sigma'}"
+        )
+
+    print()
+    print(
+        "Re-run 'sentinelclaw rules' to list the "
+        "loaded converted rules."
+    )
+
+    return {
+        "release": release,
+        "converted": summary.converted_count,
+        "skipped": summary.skipped_count,
+        "destinations": [
+            str(destination / "sigma")
+            for destination in destinations
+        ],
+        "skip_reasons": dict(
+            summary.skipped
+        ),
+    }
 
 
 def format_rule_line(
@@ -1363,6 +1524,11 @@ def execute_command(
         )
 
     elif args.command == "rules":
+        if getattr(args, "rules_subcommand", None) == "import":
+            run_rules_import(args)
+
+            return
+
         rules = get_rules()
 
         print()
@@ -1557,10 +1723,51 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    subparsers.add_parser(
+    rules_parser = subparsers.add_parser(
         "rules",
         help=(
             "Show loaded detection rules"
+        ),
+    )
+
+    rules_subparsers = rules_parser.add_subparsers(
+        dest="rules_subcommand",
+    )
+
+    import_parser = rules_subparsers.add_parser(
+        "import",
+        help=(
+            "Import SigmaHQ rules into the internal format "
+            "(user-invoked; downloads the pinned release unless "
+            "--source is given)"
+        ),
+    )
+
+    import_parser.add_argument(
+        "--source",
+        default=None,
+        help=(
+            "Path to a local SigmaHQ checkout directory or a "
+            "release zip to convert offline"
+        ),
+    )
+
+    import_parser.add_argument(
+        "--release",
+        default=None,
+        help=(
+            f"SigmaHQ release tag to download (default: "
+            f"{SIGMA_RELEASE_TAG}, override with "
+            f"SENTINELCLAW_SIGMA_RELEASE)"
+        ),
+    )
+
+    import_parser.add_argument(
+        "--dest",
+        default=None,
+        help=(
+            "Rule directory to write the converted sigma/ tree into "
+            "(default: the resolved rules directory)"
         ),
     )
 

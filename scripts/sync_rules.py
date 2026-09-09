@@ -61,11 +61,17 @@ def collect_rule_files(
     if not directory.exists():
         return files
 
+    # P2-14: rule trees are recursive (``rules/sigma/`` mirrors the
+    # layout of imported Sigma rules), so sync walks subdirectories and
+    # keys files by their path relative to the root.
     for pattern in RULE_GLOBS:
         for path in sorted(
-            directory.glob(pattern)
+            directory.rglob(pattern)
         ):
-            files[path.name] = path
+            relative = path.relative_to(
+                directory
+            )
+            files[str(relative)] = path
 
     return files
 
@@ -163,9 +169,14 @@ def main() -> int:
         )
 
         for name, path in source_files.items():
-            (
-                destination / name
-            ).write_bytes(
+            target = destination / name
+
+            target.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            target.write_bytes(
                 path.read_bytes()
             )
 
