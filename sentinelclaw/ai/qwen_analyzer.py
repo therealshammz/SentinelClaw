@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Any
 
+from sentinelclaw.config.settings import get_settings
 
-OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-DEFAULT_MODEL = "qwen3:14b"
+logger = logging.getLogger(
+    __name__
+)
 
 
 SYSTEM_INSTRUCTION = """
@@ -230,11 +233,25 @@ def build_prompt(
 
 def query_ollama(
     prompt: str,
-    model: str = DEFAULT_MODEL,
-    timeout: int = 900,
+    model: str | None = None,
+    timeout: int | None = None,
 ) -> str:
+    settings = get_settings()
+
+    resolved_model = (
+        model
+        if model is not None
+        else settings.ollama_model
+    )
+
+    resolved_timeout = (
+        timeout
+        if timeout is not None
+        else settings.ollama_timeout
+    )
+
     request_body = {
-        "model": model,
+        "model": resolved_model,
         "prompt": prompt,
         "stream": False,
         "options": {
@@ -249,7 +266,7 @@ def query_ollama(
     )
 
     request = urllib.request.Request(
-        OLLAMA_URL,
+        settings.ollama_url,
         data=encoded_body,
         headers={
             "Content-Type": "application/json",
@@ -260,13 +277,19 @@ def query_ollama(
     try:
         with urllib.request.urlopen(
             request,
-            timeout=timeout,
+            timeout=resolved_timeout,
         ) as response:
             body = response.read().decode(
                 "utf-8"
             )
 
     except urllib.error.URLError as exc:
+        logger.warning(
+            "Ollama request failed for model %s: %s",
+            resolved_model,
+            exc,
+        )
+
         raise RuntimeError(
             "Could not connect to Ollama. "
             "Make sure Ollama is running."
@@ -314,18 +337,26 @@ def query_ollama(
 
 def analyze_report_with_qwen(
     report: dict,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> dict:
+    settings = get_settings()
+
+    resolved_model = (
+        model
+        if model is not None
+        else settings.ollama_model
+    )
+
     prompt = build_prompt(
         report
     )
 
     analysis = query_ollama(
         prompt=prompt,
-        model=model,
+        model=resolved_model,
     )
 
     return {
-        "model": model,
+        "model": resolved_model,
         "analysis": analysis,
     }

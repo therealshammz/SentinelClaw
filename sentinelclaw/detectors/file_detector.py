@@ -1,3 +1,12 @@
+import logging
+
+from sentinelclaw.config.settings import get_settings
+
+logger = logging.getLogger(
+    __name__
+)
+
+
 EXECUTABLE_EXTENSIONS = {
     ".exe",
     ".dll",
@@ -151,7 +160,8 @@ def analyze_file_findings(
 
     if (
         file_info.get("is_pe_file")
-        and entropy >= 7.2
+        and entropy
+        >= get_settings().file_entropy_threshold
     ):
         findings.append(
             {
@@ -187,5 +197,10 @@ def analyze_file_findings(
                 },
             }
         )
+
+    logger.debug(
+        "File detector produced %d finding(s)",
+        len(findings),
+    )
 
     return findings

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from copy import deepcopy
 
 from sentinelclaw.config.constants import SEVERITY_RANK
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def highest_severity(
@@ -616,6 +621,15 @@ def correlate_findings(
         )
     )
 
-    return deduplicate_incidents(
+    incidents = deduplicate_incidents(
         incidents
     )
+
+    logger.debug(
+        "Correlation engine produced "
+        "%d incident(s) from %d finding(s)",
+        len(incidents),
+        len(findings),
+    )
+
+    return incidents

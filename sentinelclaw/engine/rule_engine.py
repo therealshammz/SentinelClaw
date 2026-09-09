@@ -1,7 +1,12 @@
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def load_rule_file(file_path: str | Path) -> list[dict]:
@@ -30,6 +35,11 @@ def load_rules_from_directory(
     rule_directory = Path(directory)
 
     if not rule_directory.exists():
+        logger.debug(
+            "Rules directory %s does not exist",
+            rule_directory,
+        )
+
         return []
 
     rules = []
@@ -47,6 +57,12 @@ def load_rules_from_directory(
         rules.extend(
             load_rule_file(file_path)
         )
+
+    logger.debug(
+        "Loaded %d rule(s) from %s",
+        len(rules),
+        rule_directory,
+    )
 
     return rules
 
@@ -385,5 +401,13 @@ def run_rules(
                         record,
                     )
                 )
+
+    logger.debug(
+        "Rule engine produced %d finding(s) "
+        "from %d record(s), category=%s",
+        len(findings),
+        len(records),
+        category,
+    )
 
     return findings

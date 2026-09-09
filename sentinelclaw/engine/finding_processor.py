@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from typing import Any
 
 from sentinelclaw.config.constants import (
     SEVERITY_RANK,
     VALID_SEVERITIES,
+)
+
+logger = logging.getLogger(
+    __name__
 )
 
 
@@ -443,6 +448,15 @@ def process_findings(
         normalized
     )
 
-    return sort_findings(
+    results = sort_findings(
         deduplicated
     )
+
+    logger.debug(
+        "Finding processor produced %d "
+        "finding(s) from %d raw finding(s)",
+        len(results),
+        len(findings),
+    )
+
+    return results

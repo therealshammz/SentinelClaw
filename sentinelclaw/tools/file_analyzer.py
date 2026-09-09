@@ -1,11 +1,16 @@
 import hashlib
 import json
+import logging
 import math
 import mimetypes
 import os
 import subprocess
 from collections import Counter
 from pathlib import Path
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def calculate_sha256(path: Path) -> str:
@@ -21,7 +26,14 @@ def calculate_sha256(path: Path) -> str:
 def calculate_entropy(path: Path) -> float:
     try:
         data = path.read_bytes()
-    except OSError:
+    except OSError as exc:
+        logger.warning(
+            "Unable to read %s for entropy "
+            "calculation: %s",
+            path,
+            exc,
+        )
+
         return 0.0
 
     if not data:
@@ -43,7 +55,13 @@ def is_pe_file(path: Path) -> bool:
     try:
         with path.open("rb") as file:
             return file.read(2) == b"MZ"
-    except OSError:
+    except OSError as exc:
+        logger.debug(
+            "Unable to probe PE signature for %s: %s",
+            path,
+            exc,
+        )
+
         return False
 
 
@@ -148,6 +166,13 @@ def analyze_file(file_path: str) -> dict:
 
     if os.name == "nt" and pe_file:
         result["authenticode"] = get_authenticode_status(path)
+
+    logger.debug(
+        "Analyzed %s (%d bytes, entropy %.4f)",
+        path.name,
+        stat.st_size,
+        result.get("entropy", 0.0),
+    )
 
     return result
 

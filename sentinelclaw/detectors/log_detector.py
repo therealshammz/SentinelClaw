@@ -1,4 +1,11 @@
+import logging
 from collections import Counter
+
+from sentinelclaw.config.settings import get_settings
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 HIGH_RISK_EVENT_IDS = {
@@ -40,7 +47,7 @@ def analyze_windows_events(events: list[dict]) -> list[dict]:
 
     failed_logons = event_counts.get(4625, 0)
 
-    if failed_logons >= 5:
+    if failed_logons >= get_settings().logon_failure_threshold:
         findings.append(
             {
                 "severity": "medium",
@@ -77,5 +84,12 @@ def analyze_windows_events(events: list[dict]) -> list[dict]:
                     },
                 }
             )
+
+    logger.debug(
+        "Windows event detector produced %d finding(s) "
+        "from %d event(s)",
+        len(findings),
+        len(events),
+    )
 
     return findings

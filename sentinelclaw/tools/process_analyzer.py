@@ -1,7 +1,12 @@
 import json
+import logging
 from datetime import datetime
 
 import psutil
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def safe_parent_name(process: psutil.Process) -> str | None:
@@ -52,6 +57,8 @@ def safe_create_time(timestamp) -> str | None:
 def get_processes() -> list[dict]:
     processes = []
 
+    skipped = 0
+
     attributes = [
         "pid",
         "ppid",
@@ -94,7 +101,15 @@ def get_processes() -> list[dict]:
             psutil.AccessDenied,
             psutil.ZombieProcess,
         ):
+            skipped += 1
             continue
+
+    logger.debug(
+        "Collected %d process(es) "
+        "(%d skipped)",
+        len(processes),
+        skipped,
+    )
 
     return processes
 

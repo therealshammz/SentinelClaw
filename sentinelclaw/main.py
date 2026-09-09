@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -9,10 +10,9 @@ from typing import Any
 
 from sentinelclaw.ai.qwen_analyzer import analyze_report_with_qwen
 
-from sentinelclaw.config.paths import (
-    get_report_directory,
-    get_rules_directory,
-)
+from sentinelclaw.config.logging import configure_logging
+
+from sentinelclaw.config.settings import get_settings
 
 from sentinelclaw.detectors.file_detector import analyze_file_findings
 from sentinelclaw.detectors.log_detector import analyze_windows_events
@@ -49,8 +49,9 @@ from sentinelclaw.ui.console import (
 from sentinelclaw.ui.progress import ScanProgress
 
 
-REPORT_DIRECTORY = get_report_directory()
-RULE_DIRECTORY = get_rules_directory()
+logger = logging.getLogger(
+    __name__
+)
 
 
 def print_json(data: Any) -> None:
@@ -82,7 +83,7 @@ def print_cli_error(
 def get_rules() -> list[dict]:
     try:
         return load_rules_from_directory(
-            RULE_DIRECTORY
+            get_settings().resolved_rules_dir
         )
     except Exception as exc:
         raise RuntimeError(
@@ -219,6 +220,11 @@ def run_scan(
         processes = []
         collector_status["process_error"] = str(exc)
 
+        logger.warning(
+            "Process collection failed: %s",
+            exc,
+        )
+
         progress.warning(
             "Process collection failed. "
             "Continuing with remaining collectors."
@@ -234,6 +240,11 @@ def run_scan(
         network = []
         collector_status["network_error"] = str(exc)
 
+        logger.warning(
+            "Network collection failed: %s",
+            exc,
+        )
+
         progress.warning(
             "Network collection failed. "
             "Continuing with remaining collectors."
@@ -246,11 +257,16 @@ def run_scan(
     try:
         windows_events = get_windows_events(
             log_name="Security",
-            max_events=200,
+            max_events=get_settings().max_windows_events,
         )
     except Exception as exc:
         windows_events = []
         collector_status["windows_event_error"] = str(exc)
+
+        logger.warning(
+            "Windows Security event collection failed: %s",
+            exc,
+        )
 
         progress.warning(
             "Windows Security events are unavailable. "
@@ -351,6 +367,11 @@ def run_scan(
     except Exception as exc:
         system_info = {}
         collector_status["system_info_error"] = str(exc)
+
+        logger.warning(
+            "System information collection failed: %s",
+            exc,
+        )
 
         progress.warning(
             "System information collection failed."
@@ -823,7 +844,7 @@ def save_requested_report_formats(
     try:
         return save_report_formats(
             report=report,
-            output_directory=REPORT_DIRECTORY,
+            output_directory=get_settings().resolved_report_dir,
             formats=formats,
         )
     except PermissionError as exc:
@@ -914,7 +935,7 @@ def execute_command(
         try:
             events = get_windows_events(
                 log_name="Security",
-                max_events=100,
+                max_events=get_settings().max_events_print,
             )
         except PermissionError:
             print_cli_error(
@@ -1092,7 +1113,10 @@ def execute_command(
 
         print_ai_investigation(
             report,
-            model=args.model,
+            model=(
+                args.model
+                or get_settings().ollama_model
+            ),
         )
 
 
@@ -1254,10 +1278,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     investigate_parser.add_argument(
         "--model",
-        default="qwen3:14b",
+        default=None,
         help=(
             "Ollama model to use "
-            "(default: qwen3:14b)"
+            "(default: qwen3:14b or "
+            "configured model)"
         ),
     )
 
@@ -1341,6 +1366,10 @@ def main() -> None:
     parser = build_parser()
 
     args = parser.parse_args()
+
+    configure_logging(
+        debug=args.debug
+    )
 
     try:
         execute_command(

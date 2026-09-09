@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import logging
+
 from sentinelclaw.config.constants import MONITORED_PORTS
+from sentinelclaw.config.settings import get_settings
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def detect_tcp_port_scans(
@@ -19,12 +26,13 @@ def detect_tcp_port_scans(
             0,
         )
 
-        if port_count < 20:
+        if port_count < get_settings().pcap_port_scan_threshold:
             continue
 
         severity = (
             "high"
-            if port_count >= 100
+            if port_count
+            >= get_settings().pcap_port_scan_high_threshold
             else "medium"
         )
 
@@ -85,7 +93,7 @@ def detect_udp_port_scans(
             0,
         )
 
-        if port_count < 20:
+        if port_count < get_settings().pcap_port_scan_threshold:
             continue
 
         findings.append(
@@ -223,7 +231,7 @@ def detect_high_volume_flows(
             0,
         )
 
-        if packet_count < 5000:
+        if packet_count < get_settings().pcap_flow_high_volume:
             continue
 
         findings.append(
@@ -304,6 +312,11 @@ def analyze_pcap_findings(
         detect_high_volume_flows(
             pcap_data
         )
+    )
+
+    logger.debug(
+        "PCAP detector produced %d finding(s)",
+        len(findings),
     )
 
     return findings

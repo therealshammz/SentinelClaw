@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 from scapy.all import IP, IPv6, TCP, UDP, PcapReader
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def normalize_ip(packet) -> tuple[str | None, str | None]:
@@ -276,6 +281,14 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
             20
         )
     ]
+
+    logger.debug(
+        "Parsed %d packet(s), %d unique flow(s) "
+        "from %s",
+        packets_total,
+        len(flows),
+        path.name,
+    )
 
     return {
         "path": str(

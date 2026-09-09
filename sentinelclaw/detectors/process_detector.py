@@ -1,3 +1,10 @@
+import logging
+
+logger = logging.getLogger(
+    __name__
+)
+
+
 SUSPICIOUS_DIRECTORIES = [
     "\\temp\\",
     "\\appdata\\local\\temp\\",
@@ -375,5 +382,12 @@ def analyze_processes(
                     ),
                     process,
                 )
+
+    logger.debug(
+        "Process detector produced %d finding(s) "
+        "from %d process(es)",
+        len(findings),
+        len(processes),
+    )
 
     return findings

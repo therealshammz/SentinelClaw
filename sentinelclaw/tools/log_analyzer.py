@@ -1,6 +1,11 @@
 import argparse
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 SUSPICIOUS_KEYWORDS = [
@@ -53,6 +58,14 @@ def analyze_log_file(file_path: str) -> dict:
                         "text": line.strip(),
                     }
                 )
+
+    logger.debug(
+        "Analyzed log %s: %d line(s), "
+        "%d suspicious match(es)",
+        path.name,
+        total_lines,
+        len(matches),
+    )
 
     return {
         "file": str(path),

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from sentinelclaw.config.constants import SEVERITY_RANK
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 TIMESTAMP_FIELDS = (
@@ -434,6 +439,14 @@ def build_timeline(
                 "",
             ),
         )
+    )
+
+    logger.debug(
+        "Timeline engine built %d event(s) "
+        "from %d finding(s) and %d incident(s)",
+        len(timeline),
+        len(findings),
+        len(incidents or []),
     )
 
     return timeline

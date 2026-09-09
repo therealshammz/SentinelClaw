@@ -1,6 +1,11 @@
 import json
+import logging
 
 import psutil
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 def format_address(address):
@@ -29,12 +34,22 @@ def get_network_connections() -> list[dict]:
                 }
             )
 
-    except psutil.AccessDenied:
+    except psutil.AccessDenied as exc:
+        logger.warning(
+            "Network connection collection denied: %s",
+            exc,
+        )
+
         return [
             {
                 "error": "Access denied while reading network connections. Try running the terminal as Administrator."
             }
         ]
+
+    logger.debug(
+        "Collected %d network connection(s)",
+        len(connections),
+    )
 
     return connections
 

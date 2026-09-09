@@ -1,7 +1,12 @@
 import ipaddress
+import logging
 
 from sentinelclaw.config.constants import (
     MONITORED_PORTS as SUSPICIOUS_PORTS,
+)
+
+logger = logging.getLogger(
+    __name__
 )
 
 
@@ -78,5 +83,12 @@ def analyze_network(connections: list[dict]) -> list[dict]:
                     "status": status,
                 }
             )
+
+    logger.debug(
+        "Network detector produced %d finding(s) "
+        "from %d connection(s)",
+        len(findings),
+        len(connections),
+    )
 
     return findings
