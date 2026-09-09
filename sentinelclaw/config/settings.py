@@ -36,6 +36,7 @@ max_events_print         SENTINELCLAW_MAX_EVENTS_PRINT
 max_file_analysis_size   SENTINELCLAW_MAX_FILE_ANALYSIS_SIZE
 max_pcap_packets         SENTINELCLAW_MAX_PCAP_PACKETS
 max_pcap_flows           SENTINELCLAW_MAX_PCAP_FLOWS
+correlation_window_hours SENTINELCLAW_CORRELATION_WINDOW_HOURS
 ollama_url               SENTINELCLAW_OLLAMA_URL
 ollama_model             SENTINELCLAW_OLLAMA_MODEL
 ollama_timeout           SENTINELCLAW_OLLAMA_TIMEOUT
@@ -81,6 +82,7 @@ SCALAR_FIELDS = frozenset(
         "max_file_analysis_size",
         "max_pcap_packets",
         "max_pcap_flows",
+        "correlation_window_hours",
         "ollama_url",
         "ollama_model",
         "ollama_timeout",
@@ -120,6 +122,7 @@ class Settings:
     max_file_analysis_size: int = 100 * 1024 * 1024
     max_pcap_packets: int = 2000000
     max_pcap_flows: int = 100000
+    correlation_window_hours: int = 24
     ollama_url: str = "http://127.0.0.1:11434/api/generate"
     ollama_model: str = "qwen3:14b"
     ollama_timeout: int = 900
@@ -574,6 +577,14 @@ def load_settings(
             ),
             path,
             100000,
+        ),
+        correlation_window_hours=_resolve_int(
+            "correlation_window_hours",
+            toml_data.get(
+                "correlation_window_hours"
+            ),
+            path,
+            24,
         ),
         ollama_url=_resolve_str(
             "ollama_url",

@@ -1,8 +1,49 @@
+import pytest
+
 from sentinelclaw.config.paths import get_rules_directory
 from sentinelclaw.engine.rule_engine import (
+    load_rule_file,
     load_rules_from_directory,
     run_rules,
+    validate_rule,
 )
+
+
+def single_condition_rule(
+    rule_id: str,
+    field: str,
+    operator: str,
+    value: object,
+) -> dict:
+    return {
+        "id": rule_id,
+        "title": f"Rule {rule_id}",
+        "description": "Synthetic operator test rule.",
+        "category": "process",
+        "severity": "medium",
+        "confidence": "medium",
+        "conditions": [
+            {
+                "field": field,
+                "operator": operator,
+                "value": value,
+            }
+        ],
+    }
+
+
+def triggered_ids(
+    rules: list[dict],
+    record: dict,
+) -> set[str]:
+    return {
+        str(finding.get("rule_id"))
+        for finding in run_rules(
+            rules,
+            [record],
+            category="process",
+        )
+    }
 
 
 def test_project_rules_load_successfully() -> None:
@@ -154,3 +195,433 @@ def test_yaml_file_finding_does_not_promote_process_name() -> None:
     assert matching[0]["evidence"]["name"] == (
         "suspicious.exe"
     )
+
+
+def test_not_equals_operator_matches_when_different() -> None:
+    rule = single_condition_rule(
+        "OP-NEQ-001",
+        "name",
+        "not_equals",
+        "powershell.exe",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"name": "cmd.exe"},
+    ) == {"OP-NEQ-001"}
+
+
+def test_not_equals_operator_no_match_when_equal() -> None:
+    rule = single_condition_rule(
+        "OP-NEQ-001",
+        "name",
+        "not_equals",
+        "powershell.exe",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"name": "powershell.exe"},
+    ) == set()
+
+
+def test_not_contains_operator_matches_when_absent() -> None:
+    rule = single_condition_rule(
+        "OP-NC-001",
+        "command_line",
+        "not_contains",
+        "-enc",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"command_line": "powershell -noprofile"},
+    ) == {"OP-NC-001"}
+
+
+def test_not_contains_operator_no_match_when_present() -> None:
+    rule = single_condition_rule(
+        "OP-NC-001",
+        "command_line",
+        "not_contains",
+        "-enc",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"command_line": "powershell -enc abc"},
+    ) == set()
+
+
+def test_less_or_equal_matches_below_and_boundary() -> None:
+    rule = single_condition_rule(
+        "OP-LE-001",
+        "memory_percent",
+        "less_or_equal",
+        0.5,
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"memory_percent": 0.3},
+    ) == {"OP-LE-001"}
+    assert triggered_ids(
+        [rule],
+        {"memory_percent": 0.5},
+    ) == {"OP-LE-001"}
+
+
+def test_less_or_equal_no_match_above() -> None:
+    rule = single_condition_rule(
+        "OP-LE-001",
+        "memory_percent",
+        "less_or_equal",
+        0.5,
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"memory_percent": 0.7},
+    ) == set()
+
+
+def test_less_or_equal_coerces_numeric_strings() -> None:
+    rule = single_condition_rule(
+        "OP-LE-001",
+        "memory_percent",
+        "less_or_equal",
+        "0.5",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"memory_percent": "0.4"},
+    ) == {"OP-LE-001"}
+
+
+def test_less_or_equal_non_numeric_is_no_match() -> None:
+    rule = single_condition_rule(
+        "OP-LE-001",
+        "memory_percent",
+        "less_or_equal",
+        0.5,
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"memory_percent": "high"},
+    ) == set()
+
+
+def test_matches_operator_matches_regex() -> None:
+    rule = single_condition_rule(
+        "OP-MAT-001",
+        "command_line",
+        "matches",
+        r"powershell.*encoded",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"command_line": "powershell -encodedCommand x"},
+    ) == {"OP-MAT-001"}
+
+
+def test_matches_operator_is_case_sensitive() -> None:
+    rule = single_condition_rule(
+        "OP-MAT-001",
+        "command_line",
+        "matches",
+        "^powershell",
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"command_line": "POWERSHELL -noprofile"},
+    ) == set()
+
+
+def test_matches_operator_matches_any_list_pattern() -> None:
+    rule = single_condition_rule(
+        "OP-MAT-002",
+        "command_line",
+        "matches",
+        ["secret", "shadow"],
+    )
+
+    assert triggered_ids(
+        [rule],
+        {"command_line": "run shadow task"},
+    ) == {"OP-MAT-002"}
+
+
+def test_unknown_operator_rule_is_skipped_with_warning(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_directory = tmp_path / "rules"
+    rule_directory.mkdir()
+
+    (rule_directory / "operators.yaml").write_text(
+        "rules:\n"
+        "  - id: BAD-OP-001\n"
+        "    title: Bad operator\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: fuzzy\n"
+        "        value: powershell.exe\n"
+        "  - id: GOOD-OP-001\n"
+        "    title: Good rule\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: powershell.exe\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rules_from_directory(
+            rule_directory
+        )
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"GOOD-OP-001"}
+    assert any(
+        "unknown operator" in record.message
+        for record in caplog.records
+    )
+
+
+def test_malformed_yaml_file_is_skipped_with_warning(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_directory = tmp_path / "rules"
+    rule_directory.mkdir()
+
+    (rule_directory / "broken.yaml").write_text(
+        ": not: [valid: [yaml",
+        encoding="utf-8",
+    )
+
+    (rule_directory / "valid.yaml").write_text(
+        "rules:\n"
+        "  - id: GOOD-VALID-001\n"
+        "    title: Good rule\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: powershell.exe\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rules_from_directory(
+            rule_directory
+        )
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"GOOD-VALID-001"}
+    assert any(
+        "Skipping rule file" in record.message
+        for record in caplog.records
+    )
+
+
+def test_rule_missing_required_field_is_skipped(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_directory = tmp_path / "rules"
+    rule_directory.mkdir()
+
+    (rule_directory / "missing.yaml").write_text(
+        "rules:\n"
+        "  - id: MISS-001\n"
+        "    title: No description here\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: powershell.exe\n"
+        "  - id: OK-001\n"
+        "    title: Fine\n"
+        "    description: ok\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: powershell.exe\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rules_from_directory(
+            rule_directory
+        )
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"OK-001"}
+    assert any(
+        "missing required field" in record.message
+        for record in caplog.records
+    )
+
+
+def test_matches_with_invalid_regex_rule_is_skipped(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_directory = tmp_path / "rules"
+    rule_directory.mkdir()
+
+    (rule_directory / "regex.yaml").write_text(
+        "rules:\n"
+        "  - id: BAD-REGEX-001\n"
+        "    title: Bad regex\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: command_line\n"
+        "        operator: matches\n"
+        '        value: "("\n'
+        "  - id: OK-REGEX-001\n"
+        "    title: Fine\n"
+        "    description: ok\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: command_line\n"
+        "        operator: matches\n"
+        '        value: "encoded"\n',
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rules_from_directory(
+            rule_directory
+        )
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"OK-REGEX-001"}
+    assert any(
+        "invalid regex" in record.message
+        for record in caplog.records
+    )
+
+
+def test_all_shipped_rules_load_and_validate() -> None:
+    rules = load_rules_from_directory(
+        get_rules_directory()
+    )
+
+    assert len(rules) == 13
+
+
+def test_all_rule_files_failing_raises(tmp_path) -> None:
+    rule_directory = tmp_path / "rules"
+    rule_directory.mkdir()
+
+    (rule_directory / "broken.yaml").write_text(
+        ": not: [valid: [yaml",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError):
+        load_rules_from_directory(rule_directory)
+
+
+def test_validate_rule_rejects_invalid_severity() -> None:
+    rule = single_condition_rule(
+        "X-001",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, severity="extreme")
+    )
+
+    assert not ok
+    assert "invalid severity" in reason
+
+
+def test_validate_rule_rejects_invalid_category() -> None:
+    rule = single_condition_rule(
+        "X-001",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, category="kernel")
+    )
+
+    assert not ok
+    assert "invalid category" in reason
+
+
+def test_load_rule_file_validates_individual_rules(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_file = tmp_path / "mixed.yaml"
+
+    rule_file.write_text(
+        "rules:\n"
+        "  - id: BAD-FIELD-001\n"
+        "    title: Missing conditions\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "  - id: GOOD-FIELD-001\n"
+        "    title: Good\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: powershell.exe\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rule_file(rule_file)
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"GOOD-FIELD-001"}
+

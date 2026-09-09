@@ -1,11 +1,51 @@
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from sentinelclaw.config.constants import VALID_SEVERITIES
+
 logger = logging.getLogger(
     __name__
+)
+
+SUPPORTED_OPERATORS = frozenset(
+    {
+        "equals",
+        "contains",
+        "startswith",
+        "endswith",
+        "greater_than",
+        "greater_or_equal",
+        "less_than",
+        "less_or_equal",
+        "exists",
+        "not_equals",
+        "not_contains",
+        "matches",
+    }
+)
+
+VALID_RULE_CATEGORIES = frozenset(
+    {
+        "process",
+        "network",
+        "file",
+        "windows_event",
+        "log",
+    }
+)
+
+REQUIRED_RULE_FIELDS = (
+    "id",
+    "title",
+    "description",
+    "category",
+    "severity",
+    "confidence",
+    "conditions",
 )
 
 
@@ -15,18 +55,54 @@ def load_rule_file(file_path: str | Path) -> list[dict]:
     if not path.exists():
         return []
 
-    with path.open(
-        "r",
-        encoding="utf-8",
-    ) as file:
-        data = yaml.safe_load(file) or {}
+    try:
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            data = yaml.safe_load(file) or {}
+    except yaml.YAMLError as exc:
+        logger.warning(
+            "Skipping rule file %s: invalid YAML (%s)",
+            path,
+            exc,
+        )
+
+        return []
 
     rules = data.get("rules", [])
 
     if not isinstance(rules, list):
+        logger.warning(
+            "Skipping rule file %s: top-level "
+            "'rules' must be a list",
+            path,
+        )
+
         return []
 
-    return rules
+    validated = []
+
+    for index, rule in enumerate(rules):
+        valid, reason = validate_rule(
+            rule
+        )
+
+        if not valid:
+            logger.warning(
+                "Skipping rule %d in %s: %s",
+                index,
+                path,
+                reason,
+            )
+
+            continue
+
+        validated.append(
+            rule
+        )
+
+    return validated
 
 
 def load_rules_from_directory(
@@ -42,20 +118,42 @@ def load_rules_from_directory(
 
         return []
 
-    rules = []
+    rule_files = [
+        *sorted(
+            rule_directory.glob("*.yaml")
+        ),
+        *sorted(
+            rule_directory.glob("*.yml")
+        ),
+    ]
 
-    for file_path in sorted(
-        rule_directory.glob("*.yaml")
-    ):
-        rules.extend(
-            load_rule_file(file_path)
+    if not rule_files:
+        logger.debug(
+            "No rule files found in %s",
+            rule_directory,
         )
 
-    for file_path in sorted(
-        rule_directory.glob("*.yml")
-    ):
+        return []
+
+    rules = []
+    loaded_any = False
+
+    for file_path in rule_files:
+        file_rules = load_rule_file(
+            file_path
+        )
+
+        if file_rules:
+            loaded_any = True
+
         rules.extend(
-            load_rule_file(file_path)
+            file_rules
+        )
+
+    if not loaded_any:
+        raise RuntimeError(
+            "All rule files in "
+            f"{rule_directory} failed to load"
         )
 
     logger.debug(
@@ -179,6 +277,86 @@ def match_endswith(
     )
 
 
+def _searchable_text(value: Any) -> str:
+    """Render a value as the case-preserved text regexes search on."""
+    if isinstance(value, list):
+        return " ".join(
+            str(item)
+            for item in value
+        )
+
+    if value is None:
+        return ""
+
+    return str(value)
+
+
+def _regex_search(
+    pattern: Any,
+    text: str,
+) -> bool:
+    try:
+        return (
+            re.search(
+                str(pattern),
+                text,
+            )
+            is not None
+        )
+    except re.error as exc:
+        logger.debug(
+            "matches: invalid regex %r (%s)",
+            pattern,
+            exc,
+        )
+
+        return False
+
+
+def match_matches(
+    actual,
+    expected,
+) -> bool:
+    """Return whether the actual value matches the regex pattern(s)."""
+    actual_text = _searchable_text(
+        actual
+    )
+
+    if isinstance(expected, list):
+        return any(
+            _regex_search(
+                pattern,
+                actual_text,
+            )
+            for pattern in expected
+        )
+
+    return _regex_search(
+        expected,
+        actual_text,
+    )
+
+
+def match_not_equals(
+    actual,
+    expected,
+) -> bool:
+    return not match_equals(
+        actual,
+        expected,
+    )
+
+
+def match_not_contains(
+    actual,
+    expected,
+) -> bool:
+    return not match_contains(
+        actual,
+        expected,
+    )
+
+
 def evaluate_condition(
     record: dict,
     condition: dict,
@@ -222,6 +400,24 @@ def evaluate_condition(
             expected,
         )
 
+    if operator == "matches":
+        return match_matches(
+            actual,
+            expected,
+        )
+
+    if operator == "not_equals":
+        return match_not_equals(
+            actual,
+            expected,
+        )
+
+    if operator == "not_contains":
+        return match_not_contains(
+            actual,
+            expected,
+        )
+
     if operator == "greater_than":
         try:
             return float(actual) > float(
@@ -253,6 +449,24 @@ def evaluate_condition(
             TypeError,
             ValueError,
         ):
+            return False
+
+    if operator == "less_or_equal":
+        try:
+            return float(actual) <= float(
+                expected
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            logger.debug(
+                "less_or_equal: non-numeric "
+                "comparison %r vs %r",
+                actual,
+                expected,
+            )
+
             return False
 
     if operator == "exists":
@@ -293,6 +507,151 @@ def evaluate_rule(
         return any(results)
 
     return all(results)
+
+
+def validate_condition(
+    condition: Any,
+) -> tuple[
+    bool,
+    str,
+]:
+    """Validate a single rule condition; return (ok, reason)."""
+    if not isinstance(
+        condition,
+        dict,
+    ):
+        return (
+            False,
+            "condition must be a mapping",
+        )
+
+    field = condition.get("field")
+    operator = condition.get(
+        "operator",
+        "equals",
+    )
+
+    if not field:
+        return (
+            False,
+            "condition missing field 'field'",
+        )
+
+    if operator not in SUPPORTED_OPERATORS:
+        return (
+            False,
+            f"unknown operator '{operator}'",
+        )
+
+    if "value" not in condition:
+        return (
+            False,
+            "condition missing field 'value'",
+        )
+
+    if operator == "matches":
+        patterns = (
+            condition["value"]
+            if isinstance(
+                condition["value"],
+                list,
+            )
+            else [
+                condition["value"]
+            ]
+        )
+
+        for pattern in patterns:
+            try:
+                re.compile(
+                    str(pattern)
+                )
+            except re.error as exc:
+                return (
+                    False,
+                    f"invalid regex {pattern!r}: {exc}",
+                )
+
+    return (
+        True,
+        "",
+    )
+
+
+def validate_rule(
+    rule: Any,
+) -> tuple[
+    bool,
+    str,
+]:
+    """Validate a rule; return (ok, reason)."""
+    if not isinstance(
+        rule,
+        dict,
+    ):
+        return (
+            False,
+            "rule must be a mapping",
+        )
+
+    for field in REQUIRED_RULE_FIELDS:
+        if field not in rule:
+            return (
+                False,
+                f"missing required field '{field}'",
+            )
+
+    severity = str(
+        rule.get("severity", "")
+    ).lower()
+
+    if severity not in VALID_SEVERITIES:
+        return (
+            False,
+            f"invalid severity '{rule.get('severity')}'",
+        )
+
+    category = str(
+        rule.get("category", "")
+    ).lower()
+
+    if category not in VALID_RULE_CATEGORIES:
+        return (
+            False,
+            f"invalid category '{rule.get('category')}'",
+        )
+
+    conditions = rule.get("conditions")
+
+    if (
+        not isinstance(
+            conditions,
+            list,
+        )
+        or not conditions
+    ):
+        return (
+            False,
+            "conditions must be a non-empty list",
+        )
+
+    for index, condition in enumerate(
+        conditions
+    ):
+        valid, reason = validate_condition(
+            condition
+        )
+
+        if not valid:
+            return (
+                False,
+                f"condition {index}: {reason}",
+            )
+
+    return (
+        True,
+        "",
+    )
 
 
 PROMOTED_CONTEXT_FIELDS = (
