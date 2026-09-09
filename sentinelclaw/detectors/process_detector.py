@@ -362,7 +362,15 @@ def analyze_processes(
 
         cmd = command_line_text(process)
 
-        if not executable:
+        # A missing executable path is only notable for processes that
+        # are actual programs (they have a command line). Linux kernel
+        # threads (kworker, ksoftirqd, migration, cpuhp, ...) never have
+        # an executable and never have argv — flagging each one drowns
+        # the findings in noise. An access-denied exe (root-owned daemon
+        # inspected unprivileged) is a permission boundary, not a signal.
+        # Deleted binaries are covered separately by DEL-001 / the
+        # exe_deleted flag.
+        if not executable and cmd and not process.get("exe_error"):
             findings.append(
                 {
                     "severity": "info",

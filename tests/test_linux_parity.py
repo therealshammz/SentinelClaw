@@ -141,6 +141,59 @@ def test_linux_process_fixture_yields_medium_plus_findings(
     assert "LINPROC-YAML-002" in all_ids
 
 
+def test_proc003_missing_executable_only_for_real_programs() -> None:
+    """PROC-003 must not fire for kernel threads (no argv, no exe).
+
+    Kernel threads such as kworker/ksoftirqd/migration never have an
+    executable path; flagging each one floods findings with noise. The
+    finding is only meaningful for processes that are actual programs
+    (they have a command line) whose executable could not be resolved.
+    """
+    kernel_thread = {
+        "pid": 51,
+        "name": "kworker/10:0h-kblockd",
+        "executable": None,
+        "command_line": [],
+    }
+
+    userland_no_exe = {
+        "pid": 4242,
+        "name": "mystery",
+        "executable": None,
+        "command_line": [
+            "/opt/mystery/bin/mystery",
+            "--flag",
+        ],
+    }
+
+    root_daemon = {
+        "pid": 2593,
+        "name": "postgres",
+        "executable": None,
+        "exe_error": "access_denied",
+        "command_line": [
+            "/usr/lib/postgresql/16/bin/postgres",
+        ],
+    }
+
+    findings = analyze_processes(
+        [
+            kernel_thread,
+            userland_no_exe,
+            root_daemon,
+        ]
+    )
+
+    proc003 = [
+        finding
+        for finding in findings
+        if finding.get("rule_id") == "PROC-003"
+    ]
+
+    assert len(proc003) == 1
+    assert proc003[0]["pid"] == 4242
+
+
 @pytest.mark.skipif(
     sys.platform.startswith("win"),
     reason="Linux parity fixtures require POSIX-style process records",
