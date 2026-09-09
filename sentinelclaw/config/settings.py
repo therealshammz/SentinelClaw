@@ -46,6 +46,14 @@ correlation_window_hours SENTINELCLAW_CORRELATION_WINDOW_HOURS
 ollama_url               SENTINELCLAW_OLLAMA_URL
 ollama_model             SENTINELCLAW_OLLAMA_MODEL
 ollama_timeout           SENTINELCLAW_OLLAMA_TIMEOUT
+ollama_retries           SENTINELCLAW_OLLAMA_RETRIES
+ollama_retry_backoff_seconds
+                         SENTINELCLAW_OLLAMA_RETRY_BACKOFF_SECONDS
+ollama_max_response_bytes
+                         SENTINELCLAW_OLLAMA_MAX_RESPONSE_BYTES
+ollama_token_budget      SENTINELCLAW_OLLAMA_TOKEN_BUDGET
+ollama_evidence_max_chars
+                         SENTINELCLAW_OLLAMA_EVIDENCE_MAX_CHARS
 intel_bundle_path        SENTINELCLAW_INTEL_BUNDLE_PATH
 =======================  =====================================
 
@@ -53,6 +61,15 @@ TOML keys use the plain setting names (``file_entropy_threshold = 7.5``
 etc.). The directory keys accept filesystem paths; ``intel_bundle_path``
 accepts the path of a local STIX/OpenIOC intel bundle (optional);
 all other keys accept their declared scalar types.
+
+``ollama_token_budget`` is an approximate prompt-token budget for the
+AI evidence section; SentinelClaw converts it with a documented
+4-chars-per-token heuristic and stops adding evidence once the budget
+is consumed. ``ollama_evidence_max_chars`` caps each individual
+evidence string. ``ollama_retries`` is the number of additional
+attempts after the first request; ``ollama_retry_backoff_seconds`` is
+the delay between attempts. ``ollama_max_response_bytes`` caps the
+HTTP response body read from Ollama.
 
 ``get_settings()`` is the production entry point. It caches the loaded
 :class:`Settings` and transparently reloads when the relevant
@@ -100,6 +117,11 @@ SCALAR_FIELDS = frozenset(
         "ollama_url",
         "ollama_model",
         "ollama_timeout",
+        "ollama_retries",
+        "ollama_retry_backoff_seconds",
+        "ollama_max_response_bytes",
+        "ollama_token_budget",
+        "ollama_evidence_max_chars",
     }
 )
 
@@ -158,6 +180,11 @@ class Settings:
     ollama_url: str = "http://127.0.0.1:11434/api/generate"
     ollama_model: str = "qwen3:14b"
     ollama_timeout: int = 900
+    ollama_retries: int = 1
+    ollama_retry_backoff_seconds: float = 2.0
+    ollama_max_response_bytes: int = 200000
+    ollama_token_budget: int = 8000
+    ollama_evidence_max_chars: int = 2000
     intel_bundle_path: Path | None = None
 
     @property
@@ -733,6 +760,46 @@ def load_settings(
             ),
             path,
             900,
+        ),
+        ollama_retries=_resolve_int(
+            "ollama_retries",
+            toml_data.get(
+                "ollama_retries"
+            ),
+            path,
+            1,
+        ),
+        ollama_retry_backoff_seconds=_resolve_float(
+            "ollama_retry_backoff_seconds",
+            toml_data.get(
+                "ollama_retry_backoff_seconds"
+            ),
+            path,
+            2.0,
+        ),
+        ollama_max_response_bytes=_resolve_int(
+            "ollama_max_response_bytes",
+            toml_data.get(
+                "ollama_max_response_bytes"
+            ),
+            path,
+            200000,
+        ),
+        ollama_token_budget=_resolve_int(
+            "ollama_token_budget",
+            toml_data.get(
+                "ollama_token_budget"
+            ),
+            path,
+            8000,
+        ),
+        ollama_evidence_max_chars=_resolve_int(
+            "ollama_evidence_max_chars",
+            toml_data.get(
+                "ollama_evidence_max_chars"
+            ),
+            path,
+            2000,
         ),
         intel_bundle_path=_resolve_optional_file(
             "intel_bundle_path",
