@@ -56,6 +56,7 @@ from sentinelclaw.sigma.importer import (
 )
 
 from sentinelclaw.tools.auth_log_analyzer import get_auth_events
+from sentinelclaw.tools.evtx_analyzer import analyze_evtx
 from sentinelclaw.tools.file_analyzer import analyze_file
 from sentinelclaw.tools.log_analyzer import analyze_log_file
 from sentinelclaw.tools.network_analyzer import get_network_connections
@@ -68,6 +69,8 @@ from sentinelclaw.tools.windows_event_analyzer import get_windows_events
 
 from sentinelclaw.ui.console import (
     print_dashboard,
+    print_directory_dashboard,
+    print_evtx_dashboard,
     print_file_dashboard,
     print_incidents_dashboard,
     print_log_dashboard,
@@ -842,54 +845,121 @@ def run_scan(
     return result
 
 
-def run_file_scan(
+def yara_findings_for_file(
     file_path: str,
-) -> dict:
-    path = Path(
+) -> tuple[list[dict], dict]:
+    """Run the optional YARA scan for one file.
+
+    Returns ``(findings, result)`` where ``result`` is the operational
+    scanner result (see ``sentinelclaw.tools.yara_scanner``). Each
+    matched rule becomes one ``YARA-001`` finding whose severity comes
+    from the rule's metadata (medium default). Missing yara-python or
+    an empty rules directory yields an operational note, never a
+    finding and never an error.
+    """
+    from sentinelclaw.tools.yara_scanner import (
+        scan_file_result,
+    )
+
+    result = scan_file_result(
         file_path
     )
 
-    if not path.exists():
-        return {
-            "error": (
-                f"File does not exist: "
-                f"{path}"
-            )
-        }
+    findings = []
 
-    if not path.is_file():
-        return {
-            "error": (
-                f"Path is not a file: "
-                f"{path}"
-            )
-        }
+    for match in result.get(
+        "matches",
+        [],
+    ):
+        findings.append(
+            {
+                "severity": match.get(
+                    "severity",
+                    "medium",
+                ),
+                "rule_id": "YARA-001",
+                "title": (
+                    "YARA rule matched: "
+                    f"{match.get('rule')}"
+                ),
+                "description": (
+                    "The file content matched a configured "
+                    "YARA rule."
+                ),
+                "category": "file",
+                "confidence": "medium",
+                "evidence": {
+                    "rule": match.get(
+                        "rule"
+                    ),
+                    "namespace": match.get(
+                        "namespace"
+                    ),
+                    "severity": match.get(
+                        "severity",
+                        "medium",
+                    ),
+                    "path": result.get(
+                        "path"
+                    ),
+                },
+                "mitre": {
+                    "technique": "T1204.002",
+                    "name": "Malicious File",
+                    "tactic": "Execution",
+                },
+            }
+        )
+
+    return (
+        findings,
+        result,
+    )
+
+
+def analyze_file_with_detections(
+    path: Path,
+    rules: list[dict],
+) -> dict:
+    """Run the full per-file pipeline (P4-23).
+
+    File analysis plus built-in/YAML/YARA detections for one file.
+    Returns an entry dict consumed by the single-file and
+    directory-scan report builders; failures are captured per entry
+    instead of aborting the batch.
+    """
+    entry: dict = {
+        "path": str(
+            path
+        ),
+    }
 
     try:
         file_info = analyze_file(
             str(path)
         )
-    except PermissionError:
-        return {
-            "error": (
-                "Permission denied while "
-                f"reading file: {path}"
-            )
-        }
+    except PermissionError as exc:
+        entry["error"] = (
+            "Permission denied while "
+            f"reading file: {exc}"
+        )
+
+        return entry
     except Exception as exc:
-        return {
-            "error": (
-                f"Unable to analyze file: "
-                f"{exc}"
-            )
-        }
+        entry["error"] = (
+            f"Unable to analyze file: {exc}"
+        )
+
+        return entry
+
+    entry["file"] = file_info
 
     if "error" in file_info:
-        return file_info
+        entry["error"] = file_info["error"]
+
+        return entry
 
     try:
-        rules = get_rules()
-
         built_in_findings = add_source(
             analyze_file_findings(
                 file_info
@@ -906,17 +976,96 @@ def run_file_scan(
             "yaml",
         )
 
+        yara_findings, yara_result = (
+            yara_findings_for_file(
+                str(path)
+            )
+        )
+
+        yara_sourced = add_source(
+            yara_findings,
+            "yara",
+        )
+
         findings = process_findings(
             built_in_findings
             + yaml_findings
+            + yara_sourced
         )
+    except Exception as exc:
+        entry["error"] = (
+            f"File detection failed: {exc}"
+        )
+
+        entry["findings"] = []
+
+        return entry
+
+    entry["findings"] = findings
+    entry["yara"] = yara_result
+    entry["yara_matches"] = [
+        match.get("rule")
+        for match in yara_result.get(
+            "matches",
+            [],
+        )
+    ]
+
+    return entry
+
+
+def run_file_scan(
+    file_path: str,
+) -> dict:
+    path = Path(
+        file_path
+    )
+
+    if not path.exists():
+        return {
+            "error": (
+                f"File does not exist: "
+                f"{path}"
+            )
+        }
+
+    if path.is_dir():
+        return run_directory_scan(
+            file_path
+        )
+
+    if not path.is_file():
+        return {
+            "error": (
+                f"Path is not a file: "
+                f"{path}"
+            )
+        }
+
+    try:
+        rules = get_rules()
     except Exception as exc:
         return {
             "error": (
-                "File detection failed: "
+                "Unable to load detection rules: "
                 f"{exc}"
             )
         }
+
+    entry = analyze_file_with_detections(
+        path,
+        rules,
+    )
+
+    if "error" in entry:
+        return {
+            "error": entry["error"]
+        }
+
+    findings = entry.get(
+        "findings",
+        [],
+    )
 
     return {
         "analysis": {
@@ -934,8 +1083,243 @@ def run_file_scan(
         "risk": calculate_risk_score(
             findings
         ),
-        "file": file_info,
+        "file": entry["file"],
+        "yara": entry.get(
+            "yara",
+            {},
+        ),
         "findings": findings,
+    }
+
+
+def run_directory_scan(
+    directory_path: str,
+) -> dict:
+    """Scan up to ``max_dir_files`` files inside a directory.
+
+    P4-23: each regular file (sorted by name for determinism) is
+    analyzed and scored with the same built-in/YAML/YARA detection
+    pipeline as the single-file command. Files past the cap are
+    reported via ``files_truncated``; per-file failures are collected
+    in the ``files`` entries instead of aborting the scan.
+    """
+    directory = Path(
+        directory_path
+    )
+
+    try:
+        candidates = sorted(
+            item
+            for item in directory.iterdir()
+            if item.is_file()
+        )
+    except PermissionError:
+        return {
+            "error": (
+                "Permission denied while listing "
+                f"directory: {directory}"
+            )
+        }
+    except OSError as exc:
+        return {
+            "error": (
+                "Unable to list directory: "
+                f"{exc}"
+            )
+        }
+
+    try:
+        rules = get_rules()
+    except Exception as exc:
+        return {
+            "error": (
+                "Unable to load detection rules: "
+                f"{exc}"
+            )
+        }
+
+    max_files = (
+        get_settings().max_dir_files
+    )
+
+    truncated = (
+        len(candidates) > max_files
+    )
+
+    targets = candidates[:max_files]
+
+    from sentinelclaw.tools.yara_scanner import (
+        directory_status,
+    )
+
+    yara_status = directory_status()
+
+    entries: list[dict] = []
+    all_findings: list[dict] = []
+    error_count = 0
+
+    for target in targets:
+        entry = analyze_file_with_detections(
+            target,
+            rules,
+        )
+
+        if "error" in entry:
+            error_count += 1
+        else:
+            all_findings.extend(
+                entry.get(
+                    "findings",
+                    [],
+                )
+            )
+
+        entries.append(
+            entry
+        )
+
+    processed = process_findings(
+        all_findings
+    )
+
+    return {
+        "analysis": {
+            "application": "SentinelClaw",
+            "timestamp": (
+                datetime.now()
+                .astimezone()
+                .isoformat()
+            ),
+            "type": "directory",
+            "total_files_found": len(
+                candidates
+            ),
+            "files_scanned": len(
+                targets
+            ),
+            "files_truncated": truncated,
+            "files_error_count": error_count,
+        },
+        "directory": str(
+            directory.resolve()
+        ),
+        "rules_loaded": len(
+            rules
+        ),
+        "risk": calculate_risk_score(
+            processed
+        ),
+        "yara": yara_status,
+        "files": entries,
+        "findings": processed,
+    }
+
+
+def run_evtx_scan(
+    file_path: str,
+) -> dict:
+    """Offline Windows Event Log analysis (P4-22).
+
+    ``windows-events <path.evtx>`` parses an ``.evtx`` file into the
+    same event records the live Security-log collector produces and
+    then runs the standard Windows-event detector, correlation, and
+    timeline pipeline. Missing python-evtx yields an operational note
+    via the analyzer's error dict.
+    """
+    path = Path(
+        file_path
+    )
+
+    if not path.exists():
+        return {
+            "error": (
+                f"EVTX file does not exist: "
+                f"{path}"
+            )
+        }
+
+    if not path.is_file():
+        return {
+            "error": (
+                f"EVTX path is not a file: "
+                f"{path}"
+            )
+        }
+
+    try:
+        evtx_data = analyze_evtx(
+            str(path)
+        )
+    except PermissionError:
+        return {
+            "error": (
+                "Permission denied while "
+                f"reading evtx: {path}"
+            )
+        }
+    except Exception as exc:
+        return {
+            "error": (
+                f"Unable to analyze evtx file: "
+                f"{exc}"
+            )
+        }
+
+    if "error" in evtx_data:
+        return evtx_data
+
+    try:
+        findings = process_findings(
+            add_source(
+                analyze_windows_events(
+                    evtx_data.get(
+                        "events",
+                        [],
+                    )
+                ),
+                "builtin",
+            )
+        )
+
+        incidents = correlate_findings(
+            findings
+        )
+
+        scan_timestamp = (
+            datetime.now()
+            .astimezone()
+            .isoformat()
+        )
+
+        timeline = build_timeline(
+            findings=findings,
+            incidents=incidents,
+            scan_timestamp=scan_timestamp,
+        )
+
+        risk = calculate_overall_risk(
+            findings,
+            incidents,
+        )
+    except Exception as exc:
+        return {
+            "error": (
+                "EVTX detection pipeline failed: "
+                f"{exc}"
+            )
+        }
+
+    return {
+        "analysis": {
+            "application": "SentinelClaw",
+            "timestamp": scan_timestamp,
+            "type": "evtx",
+        },
+        "risk": risk,
+        "evtx": evtx_data,
+        "findings": findings,
+        "incidents": incidents,
+        "timeline": timeline,
     }
 
 
@@ -1494,6 +1878,24 @@ def execute_command(
         if "error" in report:
             raise SystemExit(1)
 
+    elif args.command == "evtx":
+        report = run_evtx_scan(
+            args.path
+        )
+
+        if args.json:
+            print_json(
+                report
+            )
+        else:
+            print_evtx_dashboard(
+                report,
+                verbose=args.verbose,
+            )
+
+        if "error" in report:
+            raise SystemExit(1)
+
     elif args.command == "file":
         report = run_file_scan(
             args.path
@@ -1504,10 +1906,22 @@ def execute_command(
                 report
             )
         else:
-            print_file_dashboard(
-                report,
-                verbose=args.verbose,
-            )
+            if (
+                report.get(
+                    "analysis",
+                    {},
+                ).get("type")
+                == "directory"
+            ):
+                print_directory_dashboard(
+                    report,
+                    verbose=args.verbose,
+                )
+            else:
+                print_file_dashboard(
+                    report,
+                    verbose=args.verbose,
+                )
 
         if "error" in report:
             raise SystemExit(1)
@@ -2125,6 +2539,38 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument(
         "file",
         help="Path to the log file",
+    )
+
+    evtx_parser = (
+        subparsers.add_parser(
+            "evtx",
+            help=(
+                "Analyze an offline Windows "
+                "Event Log (.evtx) file"
+            ),
+        )
+    )
+
+    evtx_parser.add_argument(
+        "path",
+        help="Path to the .evtx file",
+    )
+
+    evtx_parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Print complete EVTX analysis "
+            "as JSON"
+        ),
+    )
+
+    evtx_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Show detailed EVTX findings"
+        ),
     )
 
     logs_parser.add_argument(

@@ -1140,3 +1140,357 @@ def print_incidents_dashboard(
     print()
     print("=" * WIDTH)
     print()
+
+
+def print_directory_dashboard(
+    report: dict,
+    verbose: bool = False,
+) -> None:
+    """Render the summary dashboard for a directory scan (P4-23).
+
+    A directory scan can touch up to ``max_dir_files`` files; the full
+    per-file detail lives in the JSON output, while this dashboard
+    shows the aggregate risk plus a per-file finding count table.
+    """
+    if "error" in report:
+        banner(
+            "SENTINELCLAW DIRECTORY ANALYSIS"
+        )
+
+        print()
+        print(
+            f"[ERROR] "
+            f"{report['error']}"
+        )
+        print()
+        return
+
+    analysis = report.get(
+        "analysis",
+        {},
+    )
+
+    risk = report.get(
+        "risk",
+        {},
+    )
+
+    files = report.get(
+        "files",
+        [],
+    )
+
+    findings = report.get(
+        "findings",
+        [],
+    )
+
+    banner(
+        "SENTINELCLAW DIRECTORY ANALYSIS"
+    )
+
+    section(
+        "Directory"
+    )
+
+    status(
+        "Path",
+        report.get(
+            "directory",
+            "Unknown",
+        ),
+    )
+
+    status(
+        "Files scanned",
+        analysis.get(
+            "files_scanned",
+            len(
+                files
+            ),
+        ),
+    )
+
+    status(
+        "Files with errors",
+        analysis.get(
+            "files_error_count",
+            0,
+        ),
+    )
+
+    status(
+        "Truncated by cap",
+        "yes"
+        if analysis.get(
+            "files_truncated"
+        )
+        else "no",
+    )
+
+    section(
+        "Risk"
+    )
+
+    status(
+        "Overall",
+        risk_label(
+            risk.get(
+                "score",
+                0,
+            ),
+            risk.get(
+                "level",
+                "informational",
+            ),
+        ),
+    )
+
+    status(
+        "Findings",
+        len(
+            findings
+        ),
+    )
+
+    section(
+        "Files"
+    )
+
+    if not files:
+        print(
+            "No files found in directory "
+            "(or all files were skipped)."
+        )
+
+    else:
+        for entry in files:
+            file_info = entry.get(
+                "file",
+                {},
+            )
+
+            error = entry.get(
+                "error"
+            )
+
+            file_findings = entry.get(
+                "findings",
+                [],
+            )
+
+            name = file_info.get(
+                "name",
+                entry.get(
+                    "path",
+                    "Unknown",
+                ),
+            )
+
+            if error:
+                print(
+                    f"- {name}: [ERROR] {error}"
+                )
+
+            elif file_findings:
+                severities = severity_counts(
+                    file_findings
+                )
+
+                counts = " ".join(
+                    f"{level}={count}"
+                    for level, count
+                    in severities.items()
+                    if count
+                )
+
+                print(
+                    f"- {name}: "
+                    f"{len(file_findings)} finding(s) "
+                    f"({counts})"
+                )
+
+            else:
+                print(
+                    f"- {name}: no findings"
+                )
+
+    section(
+        "Findings"
+    )
+
+    if not findings:
+        print(
+            "[+] No file indicators detected."
+        )
+
+    else:
+        for finding in findings:
+            compact_finding(
+                finding,
+                verbose=verbose,
+            )
+
+    print()
+    print("=" * WIDTH)
+    print()
+
+
+def print_evtx_dashboard(
+    report: dict,
+    verbose: bool = False,
+) -> None:
+    """Render the summary dashboard for an offline EVTX analysis (P4-22)."""
+    if "error" in report:
+        banner(
+            "SENTINELCLAW EVTX ANALYSIS"
+        )
+
+        print()
+        print(
+            f"[ERROR] "
+            f"{report['error']}"
+        )
+        print()
+        return
+
+    evtx_data = report.get(
+        "evtx",
+        {},
+    )
+
+    risk = report.get(
+        "risk",
+        {},
+    )
+
+    findings = report.get(
+        "findings",
+        [],
+    )
+
+    incidents = report.get(
+        "incidents",
+        [],
+    )
+
+    banner(
+        "SENTINELCLAW EVTX ANALYSIS"
+    )
+
+    section(
+        "Event log"
+    )
+
+    status(
+        "File",
+        evtx_data.get(
+            "name",
+            "Unknown",
+        ),
+    )
+
+    status(
+        "Records",
+        evtx_data.get(
+            "records_total",
+            0,
+        ),
+    )
+
+    status(
+        "Events parsed",
+        evtx_data.get(
+            "events_returned",
+            0,
+        ),
+    )
+
+    status(
+        "Skipped records",
+        evtx_data.get(
+            "skipped_records",
+            0,
+        ),
+    )
+
+    truncated = evtx_data.get(
+        "truncated"
+    )
+
+    status(
+        "Truncated",
+        (
+            "yes"
+            if truncated
+            else "no"
+        ),
+    )
+
+    section(
+        "Risk"
+    )
+
+    status(
+        "Overall",
+        risk_label(
+            risk.get(
+                "score",
+                0,
+            ),
+            risk.get(
+                "level",
+                "informational",
+            ),
+        ),
+    )
+
+    status(
+        "Findings",
+        len(
+            findings
+        ),
+    )
+
+    status(
+        "Incidents",
+        len(
+            incidents
+        ),
+    )
+
+    section(
+        "Findings"
+    )
+
+    if not findings:
+        print(
+            "[+] No suspicious events detected."
+        )
+
+    else:
+        for finding in findings:
+            compact_finding(
+                finding,
+                verbose=verbose,
+            )
+
+    section(
+        "Incidents"
+    )
+
+    if not incidents:
+        print(
+            "[+] No correlated incidents detected."
+        )
+
+    else:
+        for incident in incidents:
+            compact_incident(
+                incident,
+                verbose=verbose,
+            )
+
+    print()
+    print("=" * WIDTH)
+    print()

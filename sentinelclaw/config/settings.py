@@ -25,16 +25,21 @@ Setting                  Environment variable
 rules_dir                SENTINELCLAW_RULES_DIR
 report_dir               SENTINELCLAW_REPORT_DIR
 data_dir                 SENTINELCLAW_DATA_DIR
+yara_rules_dir           SENTINELCLAW_YARA_RULES_DIR
 file_entropy_threshold   SENTINELCLAW_FILE_ENTROPY_THRESHOLD
 pcap_port_scan_threshold SENTINELCLAW_PCAP_PORT_SCAN_THRESHOLD
 pcap_port_scan_high_threshold
                          SENTINELCLAW_PCAP_PORT_SCAN_HIGH_THRESHOLD
 pcap_flow_high_volume    SENTINELCLAW_PCAP_FLOW_HIGH_VOLUME
+pcap_beacon_min_packets  SENTINELCLAW_PCAP_BEACON_MIN_PACKETS
+pcap_beacon_max_cv       SENTINELCLAW_PCAP_BEACON_MAX_CV
 logon_failure_threshold  SENTINELCLAW_LOGON_FAILURE_THRESHOLD
 report_max_findings      SENTINELCLAW_REPORT_MAX_FINDINGS
 max_windows_events       SENTINELCLAW_MAX_WINDOWS_EVENTS
 max_events_print         SENTINELCLAW_MAX_EVENTS_PRINT
 max_file_analysis_size   SENTINELCLAW_MAX_FILE_ANALYSIS_SIZE
+max_dir_files            SENTINELCLAW_MAX_DIR_FILES
+max_evtx_events          SENTINELCLAW_MAX_EVTX_EVENTS
 max_pcap_packets         SENTINELCLAW_MAX_PCAP_PACKETS
 max_pcap_flows           SENTINELCLAW_MAX_PCAP_FLOWS
 correlation_window_hours SENTINELCLAW_CORRELATION_WINDOW_HOURS
@@ -44,8 +49,8 @@ ollama_timeout           SENTINELCLAW_OLLAMA_TIMEOUT
 =======================  =====================================
 
 TOML keys use the plain setting names (``file_entropy_threshold = 7.5``
-etc.). The three directory keys accept filesystem paths; all other
-keys accept their declared scalar types.
+etc.). The directory keys accept filesystem paths; all other keys
+accept their declared scalar types.
 
 ``get_settings()`` is the production entry point. It caches the loaded
 :class:`Settings` and transparently reloads when the relevant
@@ -64,6 +69,7 @@ from sentinelclaw.config.paths import (
     get_data_directory,
     get_report_directory,
     get_rules_directory,
+    get_yara_rules_directory,
 )
 
 CONFIG_ENV_VAR = "SENTINELCLAW_CONFIG"
@@ -77,11 +83,15 @@ SCALAR_FIELDS = frozenset(
         "pcap_port_scan_threshold",
         "pcap_port_scan_high_threshold",
         "pcap_flow_high_volume",
+        "pcap_beacon_min_packets",
+        "pcap_beacon_max_cv",
         "logon_failure_threshold",
         "report_max_findings",
         "max_windows_events",
         "max_events_print",
         "max_file_analysis_size",
+        "max_dir_files",
+        "max_evtx_events",
         "max_pcap_packets",
         "max_pcap_flows",
         "correlation_window_hours",
@@ -96,6 +106,7 @@ DIRECTORY_FIELDS = frozenset(
         "rules_dir",
         "report_dir",
         "data_dir",
+        "yara_rules_dir",
     }
 )
 
@@ -114,15 +125,20 @@ class Settings:
     rules_dir: Path | None = None
     report_dir: Path | None = None
     data_dir: Path | None = None
+    yara_rules_dir: Path | None = None
     file_entropy_threshold: float = 7.2
     pcap_port_scan_threshold: int = 20
     pcap_port_scan_high_threshold: int = 100
     pcap_flow_high_volume: int = 5000
+    pcap_beacon_min_packets: int = 10
+    pcap_beacon_max_cv: float = 0.5
     logon_failure_threshold: int = 5
     report_max_findings: int = 50
     max_windows_events: int = 200
     max_events_print: int = 100
     max_file_analysis_size: int = 100 * 1024 * 1024
+    max_dir_files: int = 100
+    max_evtx_events: int = 2000
     max_pcap_packets: int = 2000000
     max_pcap_flows: int = 100000
     correlation_window_hours: int = 24
@@ -153,6 +169,14 @@ class Settings:
             return self.data_dir
 
         return get_data_directory()
+
+    @property
+    def resolved_yara_rules_dir(self) -> Path:
+        """Directory containing optional YARA rules (env or package default)."""
+        if self.yara_rules_dir is not None:
+            return self.yara_rules_dir
+
+        return get_yara_rules_directory()
 
 
 def discover_config_file() -> Path | None:
@@ -501,6 +525,14 @@ def load_settings(
             path,
             get_data_directory,
         ),
+        yara_rules_dir=_resolve_directory(
+            "yara_rules_dir",
+            toml_data.get(
+                "yara_rules_dir"
+            ),
+            path,
+            get_yara_rules_directory,
+        ),
         file_entropy_threshold=_resolve_float(
             "file_entropy_threshold",
             toml_data.get(
@@ -532,6 +564,22 @@ def load_settings(
             ),
             path,
             5000,
+        ),
+        pcap_beacon_min_packets=_resolve_int(
+            "pcap_beacon_min_packets",
+            toml_data.get(
+                "pcap_beacon_min_packets"
+            ),
+            path,
+            10,
+        ),
+        pcap_beacon_max_cv=_resolve_float(
+            "pcap_beacon_max_cv",
+            toml_data.get(
+                "pcap_beacon_max_cv"
+            ),
+            path,
+            0.5,
         ),
         logon_failure_threshold=_resolve_int(
             "logon_failure_threshold",
@@ -572,6 +620,22 @@ def load_settings(
             ),
             path,
             100 * 1024 * 1024,
+        ),
+        max_dir_files=_resolve_int(
+            "max_dir_files",
+            toml_data.get(
+                "max_dir_files"
+            ),
+            path,
+            100,
+        ),
+        max_evtx_events=_resolve_int(
+            "max_evtx_events",
+            toml_data.get(
+                "max_evtx_events"
+            ),
+            path,
+            2000,
         ),
         max_pcap_packets=_resolve_int(
             "max_pcap_packets",

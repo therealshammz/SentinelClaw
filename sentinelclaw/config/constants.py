@@ -67,3 +67,28 @@ MONITORED_PORTS = {
     5555: "Common Android ADB/debugging port",
     6667: "Common IRC port",
 }
+
+# P4-21: top-level domains that are disproportionately abused for
+# phishing, malware staging, and C2 rendezvous (cheap registrations,
+# free subdomain providers, or freshly delegated ccTLDs). Matching is
+# case-insensitive on the last DNS label of a query name. This is a
+# documented indicator list, not a blocklist: legitimate uses exist.
+SUSPICIOUS_DNS_TLDS = frozenset(
+    {
+        "cf",
+        "download",
+        "ga",
+        "gq",
+        "loan",
+        "ml",
+        "party",
+        "racing",
+        "science",
+        "stream",
+        "tk",
+        "top",
+        "win",
+        "work",
+        "xyz",
+    }
+)

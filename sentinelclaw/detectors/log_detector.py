@@ -7,12 +7,33 @@ logger = logging.getLogger(
     __name__
 )
 
+# P4-22 (event-ID expansion): 4104 (PowerShell ScriptBlock logging)
+# and 4688 (process creation, with NewProcessId/NewProcessName parsed
+# from the event XML) were added to the per-event finding table.
+# 4728/4732 (group membership) and 1102 (audit log cleared) predate
+# the expansion. 4625 keeps its aggregate treatment via WIN-001 so a
+# single mistyped password does not produce a per-event finding.
+
 
 HIGH_RISK_EVENT_IDS = {
     1102: (
         "high",
         "Windows audit log cleared",
         "The Windows Security audit log was cleared.",
+    ),
+    4104: (
+        "medium",
+        "PowerShell script block logged",
+        "PowerShell ScriptBlock logging captured script content. "
+        "Review the block for obfuscation or suspicious commands.",
+    ),
+    4688: (
+        "info",
+        "Process creation audited",
+        "A new process was created (event 4688). Process creation "
+        "auditing is common; review the image and parent for "
+        "anomalous executions. Informational signal, not "
+        "necessarily malicious.",
     ),
     4697: (
         "high",
@@ -296,6 +317,24 @@ def analyze_windows_events(events: list[dict]) -> list[dict]:
                 "evidence": {
                     "event_id": 4625,
                     "count": failed_logons,
+                    "ips": sorted(
+                        {
+                            str(event.get("ip_address"))
+                            for event in events
+                            if event.get("event_id") == 4625
+                            and event.get("ip_address")
+                            and event.get("ip_address") != "-"
+                        }
+                    ),
+                    "usernames": sorted(
+                        {
+                            str(event.get("target_user"))
+                            for event in events
+                            if event.get("event_id") == 4625
+                            and event.get("target_user")
+                            and event.get("target_user") != "-"
+                        }
+                    ),
                 },
             }
         )
@@ -306,18 +345,64 @@ def analyze_windows_events(events: list[dict]) -> list[dict]:
         if event_id in HIGH_RISK_EVENT_IDS:
             severity, title, description = HIGH_RISK_EVENT_IDS[event_id]
 
+            evidence = {
+                "event_id": event_id,
+                "timestamp": event.get("timestamp"),
+                "source": event.get("source"),
+                "message_data": event.get("message_data"),
+            }
+
+            parsed_fields = {
+                "target_user": event.get(
+                    "target_user"
+                ),
+                "ip_address": event.get(
+                    "ip_address"
+                ),
+                "new_process_id": event.get(
+                    "new_process_id"
+                ),
+                "new_process_name": event.get(
+                    "new_process_name"
+                ),
+            }
+
+            for field, value in parsed_fields.items():
+                if value not in {
+                    None,
+                    "",
+                    "-",
+                }:
+                    evidence[field] = value
+
+            script_block = event.get(
+                "script_block"
+            )
+
+            if (
+                isinstance(
+                    script_block,
+                    str,
+                )
+                and script_block
+            ):
+                evidence["script_block"] = (
+                    script_block[:2000]
+                    + (
+                        "..."
+                        if len(script_block)
+                        > 2000
+                        else ""
+                    )
+                )
+
             findings.append(
                 {
                     "severity": severity,
                     "rule_id": f"WIN-{event_id}",
                     "title": title,
                     "description": description,
-                    "evidence": {
-                        "event_id": event_id,
-                        "timestamp": event.get("timestamp"),
-                        "source": event.get("source"),
-                        "message_data": event.get("message_data"),
-                    },
+                    "evidence": evidence,
                 }
             )
 

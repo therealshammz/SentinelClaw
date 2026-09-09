@@ -131,6 +131,118 @@ def get_authenticode_status(path: Path) -> dict:
         }
 
 
+def get_pe_details(path: Path) -> dict | None:
+    """Parse import/section/entry-point details from a PE file.
+
+    Uses the optional ``pefile`` package (Windows-only extra). Returns
+    ``None`` when pefile is unavailable, the file cannot be parsed as
+    a PE, or the platform is not Windows -- callers treat ``None`` as
+    "details not available" rather than an error.
+    """
+    try:
+        import pefile
+    except ImportError:
+        return None
+
+    try:
+        pe = pefile.PE(
+            str(path),
+            fast_load=True,
+        )
+    except Exception as exc:
+        logger.debug(
+            "Unable to parse PE details for %s: %s",
+            path,
+            exc,
+        )
+
+        return None
+
+    try:
+        entry_point = int(
+            pe.OPTIONAL_HEADER.AddressOfEntryPoint
+        )
+
+        sections = []
+
+        for section in pe.sections:
+            name = (
+                section.Name.decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            ).rstrip("\x00")
+
+            sections.append(
+                {
+                    "name": name,
+                    "virtual_size": int(
+                        section.Misc_VirtualSize
+                    ),
+                    "raw_size": int(
+                        section.SizeOfRawData
+                    ),
+                }
+            )
+
+        imports: list[dict] = []
+
+        try:
+            pe.parse_data_directories(
+                directories=[
+                    pefile.DIRECTORY_ENTRY[
+                        "IMAGE_DIRECTORY_ENTRY_IMPORT"
+                    ]
+                ]
+            )
+        except Exception as exc:
+            logger.debug(
+                "Unable to parse PE imports for %s: %s",
+                path,
+                exc,
+            )
+
+        for entry in getattr(
+            pe,
+            "DIRECTORY_ENTRY_IMPORT",
+            [],
+        )[:64]:
+            symbols = []
+
+            for symbol in entry.imports[:256]:
+                if symbol.name is None:
+                    continue
+
+                symbols.append(
+                    symbol.name.decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+
+            if symbols:
+                imports.append(
+                    {
+                        "dll": entry.dll.decode(
+                            "utf-8",
+                            errors="replace",
+                        ),
+                        "symbols": symbols,
+                    }
+                )
+
+        return {
+            "entry_point": entry_point,
+            "sections": sections,
+            "imports": imports,
+        }
+    finally:
+        try:
+            pe.close()
+        except Exception:
+            pass
+
+
 def analyze_file(file_path: str) -> dict:
     path = Path(file_path).expanduser()
 
@@ -171,6 +283,7 @@ def analyze_file(file_path: str) -> dict:
         "entropy": None,
         "is_pe_file": pe_file,
         "authenticode": None,
+        "pe_details": None,
     }
 
     if stat.st_size > max_size:
@@ -190,6 +303,13 @@ def analyze_file(file_path: str) -> dict:
 
     if os.name == "nt" and pe_file:
         result["authenticode"] = get_authenticode_status(path)
+
+    if (
+        os.name == "nt"
+        and pe_file
+        and not result.get("skipped")
+    ):
+        result["pe_details"] = get_pe_details(path)
 
     logger.debug(
         "Analyzed %s (%d bytes, entropy %.4f)",
