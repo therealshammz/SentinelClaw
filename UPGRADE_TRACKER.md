@@ -23,14 +23,14 @@ Full rationale/landscape research: `UPGRADE_PLAN.md`. The plan below is the auth
 
 | Phase | Items | PENDING | IN PROGRESS | DONE | BLOCKED |
 |---|---|---|---|---|---|
-| 0 — Engineering foundations | 6 | 6 | 0 | 0 | 0 |
-| 1 — Core correctness & Linux parity | 7 | 7 | 0 | 0 | 0 |
+| 0 — Engineering foundations | 6 | 4 | 0 | 2 | 0 |
+| 1 — Core correctness & Linux parity | 7 | 6 | 0 | 1 | 0 |
 | 2 — Detection content & standard adjacency | 3 | 3 | 0 | 0 | 0 |
 | 3 — Stateful hunting & analyst UX | 4 | 4 | 0 | 0 | 0 |
 | 4 — Deeper detection & intelligence | 5 | 5 | 0 | 0 | 0 |
 | 5 — AI advisory hardening | 3 | 3 | 0 | 0 | 0 |
 | 6 — Distribution & ecosystem | 3 | 3 | 0 | 0 | 0 |
-| **Total** | **31** | **31** | **0** | **0** | **0** |
+| **Total** | **31** | **28** | **0** | **3** | **0** |
 
 Research groundwork (complete): codebase audit · landscape research · `UPGRADE_PLAN.md` proposal.
 
@@ -41,7 +41,7 @@ Research groundwork (complete): codebase audit · landscape research · `UPGRADE
 Priority: P0 (quality gates first; unblocks everything). Goal: constants single-sourced, config file, logging, CI, dead code gone, test scaffold.
 
 ### P0-1 · Single source of truth for constants
-- **Status:** PENDING · **Effort:** S
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `daeb150`) · **Effort:** S
 - **Goal:** One `constants.py`: severity ranks/scores, risk levels, monitored ports, thresholds. Delete duplicated severity tables (currently ×5: correlation_engine, finding_processor, timeline_engine, console, report_generator) and risk-level blocks (×3: findings.py, main.py ×2).
 - **Acceptance:** grep proves single definition per constant; 29 existing tests still pass; behavior unchanged.
 
@@ -56,7 +56,8 @@ Priority: P0 (quality gates first; unblocks everything). Goal: constants single-
 - **Acceptance:** `--debug`-equivalent trace obtainable via log level; no behavior change in stdout output.
 
 ### P0-4 · CI + lint + typecheck
-- **Status:** PENDING · **Effort:** S
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `d99ad96`) · **Effort:** S
+- **Note:** coverage is measured in CI but NOT gated (no `--fail-under`) — the gate lands with P0-6.
 - **Goal:** GitHub Actions: pytest on Ubuntu + Windows (exercises pywin32 guard), `ruff` (lint+format), `mypy` on `sentinelclaw/`, coverage report. No CI exists today.
 - **Acceptance:** green pipeline on both OSes; lint/typecheck failures block merge.
 
@@ -77,7 +78,7 @@ Priority: P0 (quality gates first; unblocks everything). Goal: constants single-
 Priority: P1 (correctness first; Linux parity is the biggest capability gap).
 
 ### P1-7 · Fix correlation of YAML-rule findings ⚠ highest bug-fix value
-- **Status:** PENDING · **Effort:** S
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `ab92422`) · **Effort:** S
 - **Problem:** `rule_engine.create_finding` (rule_engine.py:282–307) only copies severity/rule_id/title/description/category/evidence (+mitre/confidence). Correlation reads only top-level `pid`/`process_name`/`remote_ip` → all 13 YAML-rule findings can never join INC-PROC/INC-NET incidents.
 - **Changes:** promote `pid`, `process_name`, `remote_ip`, `timestamp` to top level in `create_finding` (rule-evidence mapping: e.g., `condition.field == "pid"` → top-level). Respect `evidence` fallback in correlation/timeline (correlation_engine.py:226,319).
 - **Acceptance:** test proving a YAML process rule finding + network finding on same pid → correlated incident.
@@ -262,6 +263,9 @@ Phase 0 (foundations)        → fast, unblocks everything
 | Date | Item | What was done | Verified by |
 |---|---|---|---|
 | 2026-09-09 | (research) | Full codebase audit; landscape research (Hayabusa/osquery/Sigma/Wazuh); `UPGRADE_PLAN.md` proposal written | codebase review agent + web research |
+| 2026-09-09 | P1-7 | `rule_engine.create_finding` promotes `pid`/`process_name`/`remote_ip`/`remote_port`/`timestamp` to finding top level (process rules map `name`→`process_name`); YAML findings now join INC-PROC/INC-NET. 4 new tests (rule_engine + correlation, end-to-end). Commit `ab92422` | 35 tests green; live `scan`/`report`/`dashboard` smoke-tested |
+| 2026-09-09 | P0-1 | New leaf module `sentinelclaw/config/constants.py` centralizes severity rank/order/scores, risk thresholds, monitored ports; removed duplicated tables across correlation/finding_processor/timeline/console/report_generator/findings + both detectors. 2 new tests. Commit `daeb150` | 35 tests green; ordering verified equivalent at all 3 sort sites (negation / reverse=True) |
+| 2026-09-09 | P0-4 | dev extras + `[tool.ruff]` (E4/E7/E9/F, line-length 100), `[tool.mypy]` (3.11, ignore stubs), `[tool.coverage.run]`; `.github/workflows/ci.yml` Ubuntu+Windows × 3.11–3.13. Commit `d99ad96` | `ruff check .` clean; `mypy sentinelclaw` clean (36 files); 35 tests green; coverage 30% (report only) |
 | | | | |
 
 ## 11. Problem log (problems & decisions found along the way)
@@ -278,4 +282,6 @@ Phase 0 (foundations)        → fast, unblocks everything
 | 2026-09-09 | pre-existing | malformed YAML rule aborts whole scan | single bad rule = DoS of scanner | → P1-9 |
 | 2026-09-09 | pre-existing | Windows-centric heuristics run unconditionally → near-zero Linux signal | Linux scans ~always informational | → P1-10 |
 | 2026-09-09 | pre-existing | `log_analyzer` orphaned from pipeline; entropy reads whole file; pcap/AI iteration unbounded | OOM / orphaned feature | → P1-11, P1-12, P5-26/28 |
+| 2026-09-09 | P0-1 | **Decision:** `MONITORED_PORTS` unified to network_detector's wording — pcap detector evidence text changes slightly in reports only (`port_description`: "Common reverse-shell/metasploit port" etc.). Port numbers unchanged; console output unaffected; detection behavior unchanged. Accepted & documented | minor text delta in report evidence | accepted (no action) |
+| 2026-09-09 | P0-4 | mypy inference artifacts in `main.py` (out of scope this round) → `[[tool.mypy.overrides]]` disables `assignment`/`misc` for `sentinelclaw.main`; remove when main.py is typed. Two `# type: ignore[misc]` in `correlation_engine.py` (heterogeneous finding dict narrowing) | suppressed, commented in code | → resolve with P6-30 typing pass |
 | | | | | |
