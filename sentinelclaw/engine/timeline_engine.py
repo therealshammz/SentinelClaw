@@ -3,14 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-
-SEVERITY_RANK = {
-    "critical": 5,
-    "high": 4,
-    "medium": 3,
-    "low": 2,
-    "info": 1,
-}
+from sentinelclaw.config.constants import SEVERITY_RANK
 
 
 TIMESTAMP_FIELDS = (

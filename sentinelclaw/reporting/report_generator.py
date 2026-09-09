@@ -6,15 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
-SEVERITY_RANK = {
-    "critical": 5,
-    "high": 4,
-    "medium": 3,
-    "low": 2,
-    "info": 1,
-    "informational": 1,
-}
+from sentinelclaw.config.constants import SEVERITY_RANK
 
 
 def _safe(value: Any) -> str:
@@ -24,8 +16,15 @@ def _safe(value: Any) -> str:
 
 
 def _severity_rank(severity: str) -> int:
+    normalized = str(
+        severity
+    ).lower()
+
+    if normalized == "informational":
+        normalized = "info"
+
     return SEVERITY_RANK.get(
-        str(severity).lower(),
+        normalized,
         0,
     )
 

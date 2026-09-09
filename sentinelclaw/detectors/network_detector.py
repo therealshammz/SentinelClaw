@@ -1,12 +1,8 @@
 import ipaddress
 
-
-SUSPICIOUS_PORTS = {
-    23: "Telnet",
-    4444: "Common reverse-shell/metasploit port",
-    5555: "Common Android ADB/debugging port",
-    6667: "Common IRC port",
-}
+from sentinelclaw.config.constants import (
+    MONITORED_PORTS as SUSPICIOUS_PORTS,
+)
 
 
 def is_public_ip(ip: str) -> bool:

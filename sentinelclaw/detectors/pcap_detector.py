@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-
-MONITORED_PORTS = {
-    23: "Telnet",
-    4444: "Common reverse-shell port",
-    5555: "Common remote/debug port",
-    6667: "IRC",
-}
+from sentinelclaw.config.constants import MONITORED_PORTS
 
 
 def detect_tcp_port_scans(

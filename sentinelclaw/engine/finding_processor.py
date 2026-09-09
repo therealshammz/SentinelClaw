@@ -4,22 +4,10 @@ import json
 from copy import deepcopy
 from typing import Any
 
-
-VALID_SEVERITIES = {
-    "info",
-    "low",
-    "medium",
-    "high",
-    "critical",
-}
-
-SEVERITY_RANK = {
-    "info": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
-}
+from sentinelclaw.config.constants import (
+    SEVERITY_RANK,
+    VALID_SEVERITIES,
+)
 
 
 def normalize_severity(value: Any) -> str:

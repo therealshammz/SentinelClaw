@@ -1,14 +1,10 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 
-
-SEVERITY_SCORES = {
-    "info": 0,
-    "low": 1,
-    "medium": 3,
-    "high": 7,
-    "critical": 10,
-}
+from sentinelclaw.config.constants import (
+    SEVERITY_SCORES,
+    risk_level_from_score,
+)
 
 
 @dataclass
@@ -33,18 +29,9 @@ def calculate_risk_score(findings: list[dict]) -> dict:
 
     score = min(score, 100)
 
-    if score >= 70:
-        level = "critical"
-    elif score >= 40:
-        level = "high"
-    elif score >= 20:
-        level = "medium"
-    elif score >= 1:
-        level = "low"
-    else:
-        level = "informational"
-
     return {
         "score": score,
-        "level": level,
+        "level": risk_level_from_score(
+            score
+        ),
     }

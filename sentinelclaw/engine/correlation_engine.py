@@ -4,14 +4,7 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any
 
-
-SEVERITY_RANK = {
-    "info": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
-}
+from sentinelclaw.config.constants import SEVERITY_RANK
 
 
 def highest_severity(

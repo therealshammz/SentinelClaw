@@ -5,15 +5,16 @@ import os
 import sys
 from typing import Any
 
+from sentinelclaw.config.constants import (
+    SEVERITY_RANK,
+    SEVERITY_ORDER as _SEVERITY_ORDER,
+)
+
 
 WIDTH = 72
 
-SEVERITY_ORDER = (
-    "critical",
-    "high",
-    "medium",
-    "low",
-    "info",
+SEVERITY_ORDER = tuple(
+    reversed(_SEVERITY_ORDER)
 )
 
 
@@ -577,17 +578,9 @@ def print_dashboard(
         )
 
     else:
-        severity_rank = {
-            "critical": 5,
-            "high": 4,
-            "medium": 3,
-            "low": 2,
-            "info": 1,
-        }
-
         ranked = sorted(
             findings,
-            key=lambda item: severity_rank.get(
+            key=lambda item: SEVERITY_RANK.get(
                 str(
                     item.get(
                         "severity",
