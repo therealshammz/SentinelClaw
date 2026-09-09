@@ -24,15 +24,16 @@ Full rationale/landscape research: `UPGRADE_PLAN.md`. The plan below is the auth
 | Phase | Items | PENDING | IN PROGRESS | DONE | BLOCKED |
 |---|---|---|---|---|---|
 | 0 — Engineering foundations | 6 | 0 | 0 | 6 | 0 |
-| 1 — Core correctness & Linux parity | 7 | 6 | 0 | 1 | 0 |
+| 1 — Core correctness & Linux parity | 7 | 0 | 0 | 7 | 0 |
 | 2 — Detection content & standard adjacency | 3 | 3 | 0 | 0 | 0 |
 | 3 — Stateful hunting & analyst UX | 4 | 4 | 0 | 0 | 0 |
 | 4 — Deeper detection & intelligence | 5 | 5 | 0 | 0 | 0 |
 | 5 — AI advisory hardening | 3 | 3 | 0 | 0 | 0 |
 | 6 — Distribution & ecosystem | 3 | 3 | 0 | 0 | 0 |
-| **Total** | **31** | **24** | **0** | **7** | **0** |
+| **Total** | **31** | **18** | **0** | **13** | **0** |
 
-Phase 0 (foundations) complete 2026-09-09: P0-1, P0-2, P0-3, P0-4, P0-5, P0-6. Next: Phase 1 core correctness + Linux parity.
+Phase 0 (foundations) complete 2026-09-09: P0-1, P0-2, P0-3, P0-4, P0-5, P0-6.
+Phase 1 (core correctness + Linux parity) complete 2026-09-09: P1-7, P1-8, P1-9, P1-10, P1-11, P1-12, P1-13. Next: Phase 2 (Sigma import — needs P1-9, done).
 
 Research groundwork (complete): codebase audit · landscape research · `UPGRADE_PLAN.md` proposal.
 
@@ -90,36 +91,42 @@ Priority: P1 (correctness first; Linux parity is the biggest capability gap).
 - **Acceptance:** test proving a YAML process rule finding + network finding on same pid → correlated incident.
 
 ### P1-8 · Time-window correlation
-- **Status:** PENDING · **Effort:** M
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `7d1ad37`) · **Effort:** M
 - **Goal:** `correlation_engine` groups only findings inside a configurable window (default 24h); incidents get `first_seen`/`last_seen`. Today correlation ignores timestamps entirely.
 - **Acceptance:** findings outside window don't correlate; incident carries window bounds.
+- **Done:** `correlation_window_hours` setting (env `SENTINELCLAW_CORRELATION_WINDOW_HOURS`); `_filter_by_window` anchored at earliest timestamped finding; untimestamped/unparseable findings always correlate (backward compat); non-positive window disables filtering; incidents carry `first_seen`/`last_seen` (omitted when no member has a parseable timestamp — keeps untimestamped-fixture tests green). Reuses `timeline_engine.parse_timestamp`. 10 tests in `tests/test_correlation_window.py`.
 
 ### P1-9 · Rule engine v2
-- **Status:** PENDING · **Effort:** M
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `7d1ad37`) · **Effort:** M
 - **Goal:** Add `not_equals`, `less_or_equal`, `matches` (regex), `not_contains`. Unknown operator ⇒ load-time validation error, not silent `False` (rule_engine.py:245). Validate rules at load (required fields, severities, categories, condition schema). **Per-rule isolation:** one malformed YAML ⇒ warning + skip, scan continues (today it aborts everything — main.py:1385).
 - **Acceptance:** malformed-rule fixture logs warning, scan completes; new operators unit-tested; existing 13 rules still valid.
+- **Done:** 4 new operators (`not_equals`, `not_contains`, `less_or_equal` float-coercion, `matches` case-sensitive `re.search`, invalid regex guarded); load-time `validate_rule`/`validate_condition` (required fields, severity, category, condition schema, operator set); per-rule isolation (malformed YAML/invalid rule → warning + skip; all-files-fail → RuntimeError). 24 new tests in `tests/test_rule_engine.py`.
 
 ### P1-10 · Linux parity ⚠ biggest capability gap
-- **Status:** PENDING · **Effort:** L
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `1b54ce0`) · **Effort:** L
 - **Goal:** Real Linux signal: (a) auth log detector (sshd failed/passwordless/root logins, sudo failures, journald `_COMM` filters); (b) persistence checks (cron jobs, systemd unit files, rc*, at); (c) Linux LOLBin detection (bash/sh/python/perl/curl/wget/nc with suspicious parents/args) replacing `.exe`/backslash assumptions with OS-agnostic path handling; (d) listening sockets + non-standard ports; (e) deleted-binary (`/proc/<pid>/exe` readlink) check. Add Linux rules to both `sentinelclaw/rules/` and `rules/`; gate rules by OS/category so Windows rules don't fire noise on Linux.
 - **Acceptance:** on Linux, a simulated malicious process (e.g., curl|bash from temp) yields medium+ findings; Windows rules don't fire on Linux fixtures.
+- **Done:** auth collector (`tools/auth_log_analyzer.py`, bounded-tail /var/log/auth.log+secure) → `detectors/auth_detector.py` AUTH-001..004; persistence collector (`tools/persistence_analyzer.py`, cron/systemd/rc/at, per-directory permission-tolerant) → `detectors/persistence_detector.py` PERS-001..005; OS-agnostic process_detector (record-shape classification keeps Windows path byte-identical) + LIN-PROC-001..005 + DEL-001 (deleted-binary via `/proc/<pid>/exe` readlink); NET-LISTEN-001 (LISTEN >1024 non-service); `os` field on rules (linux/windows/all, validated, skipped at load when platform-excluded); 3 new Linux rule files in BOTH copies (identical); `os: [windows]` on PROC-YAML-003/004 + WIN-YAML-*. 12 tests in `tests/test_linux_parity.py`. Real-host smoke: 38 auth events, 1462 persistence records scanned, DEL-001/NET-002/PROC-003 findings.
 
 ### P1-11 · Wire `logs <path>` into the finding pipeline
-- **Status:** PENDING · **Effort:** M
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `73e083c`) · **Effort:** M
 - **Problem:** log_analyzer keyword grep (11 keywords) produces raw matches only — no findings, no severity, no rules, no correlation.
 - **Changes:** log_analyzer output → structured events → detectors/rules → findings (auth-failure thresholds, keyword classes); participate in incidents/risk/reports.
 - **Acceptance:** `sentinelclaw logs <fixture>` emits findings; end-to-end test.
+- **Done:** `analyze_log_file` keeps contract + adds structured `events` (timestamp/source/event_type/event_class/message/severity_hint/ip/host/username/line_number); `SUSPICIOUS_KEYWORDS` 11→15; `analyze_log_events` → LOG-001 (aggregated auth failures, threshold from settings) + LOG-002..008 (per-class, MITRE-mapped); `run_log_scan` full pipeline (collect→detect→dedupe→correlate→timeline→risk); `logs` prints dashboard (`print_log_dashboard`), `--json` for machine output. 8 tests in `tests/test_log_analyzer_pipeline.py`.
 
 ### P1-12 · Streaming memory guards
-- **Status:** PENDING · **Effort:** S
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `73e083c`) · **Effort:** S
 - **Problems:** entropy loads whole file (file_analyzer.py:21–39, OOM on large files); JSON report embeds all raw collectors (multi-MB); pcap iteration unbounded.
 - **Changes:** chunked entropy; skip/size-cap flagged large files (config); report summarization — raw data only via dedicated dump/`--json-raw`.
 - **Acceptance:** analyzing a >1GB sparse file peaks well under file size; report JSON bounded.
+- **Done:** chunked entropy (1 MiB buffer, weighted — deterministic, identical results on small files); `max_file_analysis_size` (100 MiB default, env/TOML) → `skipped: true`/`skipped_reason: "too large"` operational note (300 MB file at 21 MB peak RSS); `max_pcap_packets` (2M) / `max_pcap_flows` (100k) caps + truncation metadata; `run_scan(include_raw=False)` default — raw collector dumps only via new `--json-raw` on `scan`/`report` (no existing test asserted raw keys; none changed). 14 tests in `tests/test_streaming_guards.py`.
 
 ### P1-13 · End-to-end pipeline tests
-- **Status:** PENDING · **Effort:** M
+- **Status:** DONE (2026-09-09, branch `feat/upgrade-phase1`, commit `cc4d41b`) · **Effort:** M
 - **Goal:** Canned-data scan tests asserting: known finding set, dedupe, correlation incl. YAML findings, timeline order, risk score, JSON schema stability.
 - **Acceptance:** one `run_scan`-level test over fixtures; covers items 7–9 regressions.
+- **Done:** `tests/test_end_to_end.py` — 7 `run_scan`-level tests with monkeypatched collectors: known finding set (PROC-001/002/004/005, NET-001/002, WIN-1102/4720; WIN-001 absent at 3<5 logons), dedupe, YAML-rule correlation (INC-PROC joins builtin + YAML finding on pid 4242), timeline order, benign-vs-malicious risk (0/informational vs 60/high), schema stability (raw keys absent by default, present with `include_raw=True`), time-window regression (48h apart → no incident at 24h; correlates at 72h), rule-isolation regression (broken YAML skipped, valid rule fires). No production changes.
 
 ---
 
@@ -262,10 +269,9 @@ Phase 0 (foundations)        → fast, unblocks everything
 
 **Starter batch (approved items, dispatch-ready):** P0-1 · P0-4 · P1-7 — **all DONE 2026-09-09.**
 
-**Phase 0 (foundations) complete 2026-09-09.** Next dispatch-ready batches (Phase 1):
-- Batch A (in progress): P1-11 (wire `logs` into findings) · P1-12 (streaming memory guards) · P1-13 (E2E tests) — all touch main.py/tests, one session.
-- Batch B: P1-8 (time-window correlation) · P1-9 (rule engine v2) — both in `engine/`.
-- Batch C: P1-10 (Linux parity, L — biggest capability gap).
+**Phase 0 (foundations) complete 2026-09-09.** **Phase 1 (core correctness + Linux parity) complete 2026-09-09.** Next dispatch-ready batches (Phase 2 — requires P1-9, done):
+- Batch E: P2-15 (rule quality fields, S) · P2-16 (rules sync hygiene, S) — small, independent.
+- Batch F: P2-14 (Sigma-rule import layer, L — the content multiplier).
 
 ---
 
@@ -279,6 +285,10 @@ Phase 0 (foundations)        → fast, unblocks everything
 | 2026-09-09 | P0-4 | dev extras + `[tool.ruff]` (E4/E7/E9/F, line-length 100), `[tool.mypy]` (3.11, ignore stubs), `[tool.coverage.run]`; `.github/workflows/ci.yml` Ubuntu+Windows × 3.11–3.13. Commit `d99ad96` | `ruff check .` clean; `mypy sentinelclaw` clean (36 files); 35 tests green; coverage 30% (report only) |
 | 2026-09-09 | P0-2 / P0-3 / P0-5 | Settings layer (`config/settings.py`: frozen dataclass, TOML→env→defaults, fail-loud, env-keyed cache; consumers: detectors, main.py caps, qwen_analyzer); stdlib logging to stderr (`config/logging.py`, `--debug`); dead code removed (`models.Finding`, empty `utils/`), `__main__.py` added, `requirements.txt` regenerated w/ pywin32 marker. Commit `efb930f` | 52 tests green; ruff+mypy clean; `python -m sentinelclaw --help` exits 0; scan smoke exit 0, stderr 0 bytes; 17 new tests (settings 13, logging 4) |
 | 2026-09-09 | P0-6 | `tests/conftest.py` canned fixtures (process/network/windows-event/pcap + autouse env isolation + `rules_dir_tmp` + `detector_pipeline`); 6 fixture-consuming tests proving detectors/engines run over canned data; CI coverage gate `--cov-fail-under=30`. Commit `abd5455` | 58 tests green (0.6s); coverage 36%→40.41%; gate passes locally; ruff+mypy clean |
+| 2026-09-09 | P1-11 / P1-12 | `logs <path>` wired into full pipeline (`run_log_scan`, LOG-001..008, dashboard, `--json`); streaming guards: chunked entropy (1 MiB), `max_file_analysis_size` (100 MiB) skip, pcap packet/flow caps, `--json-raw` gating raw dumps on scan/report. Commit `73e083c` | 80 tests green; coverage 40%→52%; 300 MB file at 21 MB peak RSS; scan JSON bounded |
+| 2026-09-09 | P1-8 / P1-9 | Time-window correlation (`correlation_window_hours`=24, first_seen/last_seen, untimestamped always correlate); rule engine v2 (4 new operators, load-time validation, per-rule isolation). Commit `7d1ad37` | 110 tests green; coverage 55%; 13 shipped rules still validate |
+| 2026-09-09 | P1-13 | `tests/test_end_to_end.py` — 7 `run_scan`-level tests (known finding set, dedupe, YAML-rule correlation, timeline order, risk, schema stability, window + isolation regressions). Commit `cc4d41b` | 117 tests green; coverage 56%; no production changes |
+| 2026-09-09 | P1-10 | Linux parity: auth detector (AUTH-001..004), persistence (PERS-001..005), OS-agnostic process detection (LIN-PROC-001..005, DEL-001), NET-LISTEN-001, `os` rule gating, 3 Linux rule files in both copies, `os: [windows]` on Windows-specific rules. Commit `1b54ce0` | 129 tests green; coverage 61%; 19 rules on Linux; `diff -rq rules sentinelclaw/rules` identical; real-host scan finds DEL-001/NET-002/PROC-003 |
 | | | | |
 
 ## 11. Problem log (problems & decisions found along the way)
@@ -300,4 +310,12 @@ Phase 0 (foundations)        → fast, unblocks everything
 | 2026-09-09 | P0-2 | **Deviation:** `investigate --model` argparse default changed `"qwen3:14b"` → `None`, resolved at call time from `settings.ollama_model` so config actually takes effect. Unconfigured output identical; help text reworded. Directory settings exposed as `Path | None` with `resolved_*` properties delegating to paths.py | enable config-driven model | accepted; P5-26 builds on it |
 | 2026-09-09 | P0-5 | **Decision:** regenerated `requirements.txt` instead of deleting it — README.md (project tree) and CLAUDE.md reference the file; pyproject remains canonical. Added missing `pywin32>=311; platform_system == 'Windows'` marker; dropped scapy/pytest (live in extras) | legacy file stays as convenience | accepted |
 | 2026-09-09 | P0-6 | **Decision:** coverage gate set at floor 30 (`--cov-fail-under=30`) rather than 70 or a per-module exception list. Aggregate 36%; deterministic collectors (process/network/pcap analyzers, 0–23%) are exactly the Phase 1 fixture-test targets, so omitting them to fake 70% would gut the gate. Floor to be raised as Phase 1–4 add tests | weak-ish gate now | raise toward 70% with Phase 1 detector tests |
+| 2026-09-09 | P1-11 | **Deviation:** `logs` default stdout changed from raw-JSON dump to analysis dashboard (the point of P1-11); `--json` preserves machine-readable output. `SUSPICIOUS_KEYWORDS` 11→15 (all map to existing/new classes) | intended behavior change | accepted |
+| 2026-09-09 | P1-12 | **Decision:** no existing test asserted raw collector keys in report JSON (no test_report_generator.py; test_cli.py only parser/help/error paths) → option (a): raw dumps gated behind `--json-raw` on `scan`/`report`; default JSON keeps summary/findings/incidents/risk/timeline/collector_status/system | schema unchanged except gated raw dumps | accepted |
+| 2026-09-09 | P1-12 | **Tooling:** global opencode formatter was destroying the repo's hand-wrapped style on edit → project-scoped `.opencode/opencode.json` (`formatter: false`) committed; agents to use filesystem_edit_file for line-based edits | style preservation | accepted |
+| 2026-09-09 | P1-12 | **Tooling:** stray `uv.lock` (161 KB) appeared in working tree during agent session (uv tooling artifact; project is pyproject-based, no uv config) | noise in git status | deleted, not committed |
+| 2026-09-09 | P1-9 | **Decision:** `matches` operator is case-sensitive by design (documented in code); `less_or_equal` reuses the pre-existing `less_than` float-coercion pattern. Empty rules dir (zero YAML files) still returns `[]` silently (existing behavior); only "files present but all failing to load" raises RuntimeError | documented semantics | accepted |
+| 2026-09-09 | P1-10 | **Decision:** detector logic gated by record SHAPE (`is_windows_style_process`: .exe name / backslash path) not `sys.platform` — required for deterministic cross-platform canned tests; platform gating applied at rule load (`os` field) and collectors (Linux-only /proc, auth, persistence). Windows detection path byte-identical on Windows | cross-platform determinism | accepted |
+| 2026-09-09 | P1-10 | **Deviation:** journald not invoked via subprocess (read-only/no-privilege principle); file-based sources (/var/log/auth.log, /var/log/secure) cover sshd/sudo/su/cron via syslog forwarding — documented in module docstring. MITRE ids corrected to accurate mappings (cron T1053.003, at T1053.002, rc T1037, systemd T1543.002) | scope note | accepted |
+| 2026-09-09 | P1-10 | **Bug found & fixed during smoke:** unreadable `/var/spool/cron/crontabs` aborted all persistence collection → collectors now skip unreadable locations per-directory with a warning (operational note, not error) | robustness | fixed in `1b54ce0` |
 | | | | | |
