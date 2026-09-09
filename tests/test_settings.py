@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from sentinelclaw.config.paths import (
     get_data_directory,
@@ -351,6 +352,44 @@ def test_file_detector_reads_entropy_setting(monkeypatch) -> None:
     }
 
     assert "FILE-004" in rule_ids
+
+
+def test_intel_bundle_path_from_env(monkeypatch, tmp_path) -> None:
+    clear_settings_env(monkeypatch)
+
+    bundle = tmp_path / "intel.json"
+
+    monkeypatch.setenv(
+        "SENTINELCLAW_INTEL_BUNDLE_PATH",
+        str(bundle),
+    )
+
+    settings = load_settings()
+
+    assert settings.intel_bundle_path == bundle.resolve()
+
+    monkeypatch.delenv(
+        "SENTINELCLAW_INTEL_BUNDLE_PATH"
+    )
+
+    assert load_settings().intel_bundle_path is None
+
+
+def test_intel_bundle_path_from_toml(monkeypatch, tmp_path) -> None:
+    clear_settings_env(monkeypatch)
+
+    config_file = tmp_path / "sentinelclaw.toml"
+
+    config_file.write_text(
+        "intel_bundle_path = \"/toml/intel.json\"\n",
+        encoding="utf-8",
+    )
+
+    settings = load_settings(
+        config_file=config_file
+    )
+
+    assert settings.intel_bundle_path == Path("/toml/intel.json").resolve()
 
 
 def test_settings_known_field_sets_are_complete() -> None:

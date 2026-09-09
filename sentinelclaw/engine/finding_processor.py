@@ -9,6 +9,7 @@ from sentinelclaw.config.constants import (
     SEVERITY_RANK,
     VALID_SEVERITIES,
 )
+from sentinelclaw.models.risk import finding_risk_breakdown
 
 logger = logging.getLogger(
     __name__
@@ -466,6 +467,15 @@ def process_findings(
     results = sort_findings(
         deduplicated
     )
+
+    # P4-24: every processed finding carries the documented risk
+    # breakdown (``models.risk.finding_risk_breakdown``) so reporters,
+    # JSON output and state records can expose the components without
+    # recomputing the model at each call site.
+    for finding in results:
+        finding["risk"] = finding_risk_breakdown(
+            finding
+        )
 
     logger.debug(
         "Finding processor produced %d "

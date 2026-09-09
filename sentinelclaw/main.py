@@ -39,7 +39,10 @@ from sentinelclaw.engine.rule_engine import (
 )
 from sentinelclaw.engine.timeline_engine import build_timeline
 
-from sentinelclaw.models.findings import calculate_risk_score
+from sentinelclaw.models.risk import (
+    calculate_overall_risk,
+    calculate_risk_score,
+)
 
 from sentinelclaw.reporting.report_generator import (
     generate_jsonl_report,
@@ -58,6 +61,11 @@ from sentinelclaw.sigma.importer import (
 from sentinelclaw.tools.auth_log_analyzer import get_auth_events
 from sentinelclaw.tools.evtx_analyzer import analyze_evtx
 from sentinelclaw.tools.file_analyzer import analyze_file
+from sentinelclaw.tools.intel_loader import (
+    check_collected_values,
+    connection_remote_ips,
+    load_intel_bundle,
+)
 from sentinelclaw.tools.log_analyzer import analyze_log_file
 from sentinelclaw.tools.network_analyzer import get_network_connections
 from sentinelclaw.tools.persistence_analyzer import (
@@ -430,89 +438,6 @@ def add_source(
     return result
 
 
-def calculate_incident_risk(
-    incidents: list[dict],
-) -> dict:
-    weights = {
-        "info": 0,
-        "low": 1,
-        "medium": 5,
-        "high": 12,
-        "critical": 20,
-    }
-
-    score = 0
-
-    for incident in incidents:
-        severity = str(
-            incident.get(
-                "severity",
-                "info",
-            )
-        ).lower()
-
-        score += weights.get(
-            severity,
-            0,
-        )
-
-    score = min(
-        score,
-        100,
-    )
-
-    if score >= 70:
-        level = "critical"
-    elif score >= 40:
-        level = "high"
-    elif score >= 20:
-        level = "medium"
-    elif score >= 1:
-        level = "low"
-    else:
-        level = "informational"
-
-    return {
-        "score": score,
-        "level": level,
-    }
-
-
-def calculate_overall_risk(
-    findings: list[dict],
-    incidents: list[dict],
-) -> dict:
-    finding_risk = calculate_risk_score(
-        findings
-    )
-
-    incident_risk = calculate_incident_risk(
-        incidents
-    )
-
-    overall_score = max(
-        finding_risk["score"],
-        incident_risk["score"],
-    )
-
-    if overall_score >= 70:
-        overall_level = "critical"
-    elif overall_score >= 40:
-        overall_level = "high"
-    elif overall_score >= 20:
-        overall_level = "medium"
-    elif overall_score >= 1:
-        overall_level = "low"
-    else:
-        overall_level = "informational"
-
-    return {
-        "score": overall_score,
-        "level": overall_level,
-        "finding_risk": finding_risk,
-        "incident_risk": incident_risk,
-    }
-
 
 def run_scan(
     show_progress: bool = False,
@@ -727,12 +652,44 @@ def run_scan(
         + yaml_persistence_findings
     )
 
+    # P4-25: offline threat-intel matching. Only runs when the
+    # ``intel_bundle_path`` setting names a local STIX/OpenIOC
+    # bundle; the scan data available here is network connections
+    # (IPs only -- no file hashes or DNS names are collected by
+    # ``run_scan``), so only IP indicators can fire. A malformed
+    # bundle is an operational warning, never a scan failure.
+    intel_results: list[dict] = []
+
+    intel_bundle_path = get_settings().intel_bundle_path
+
+    if intel_bundle_path is not None:
+        intel_bundle = load_intel_bundle(
+            str(intel_bundle_path)
+        )
+
+        if "error" in intel_bundle:
+            logger.warning(
+                "Threat-intel bundle skipped: %s",
+                intel_bundle["error"],
+            )
+        else:
+            intel_results = add_source(
+                check_collected_values(
+                    intel_bundle,
+                    ips=connection_remote_ips(
+                        network
+                    ),
+                ),
+                "intel",
+            )
+
     all_findings = process_findings(
         process_results
         + network_results
         + windows_results
         + auth_results
         + persistence_results
+        + intel_results
     )
 
     progress.step(

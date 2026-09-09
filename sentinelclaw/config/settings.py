@@ -46,11 +46,13 @@ correlation_window_hours SENTINELCLAW_CORRELATION_WINDOW_HOURS
 ollama_url               SENTINELCLAW_OLLAMA_URL
 ollama_model             SENTINELCLAW_OLLAMA_MODEL
 ollama_timeout           SENTINELCLAW_OLLAMA_TIMEOUT
+intel_bundle_path        SENTINELCLAW_INTEL_BUNDLE_PATH
 =======================  =====================================
 
 TOML keys use the plain setting names (``file_entropy_threshold = 7.5``
-etc.). The directory keys accept filesystem paths; all other keys
-accept their declared scalar types.
+etc.). The directory keys accept filesystem paths; ``intel_bundle_path``
+accepts the path of a local STIX/OpenIOC intel bundle (optional);
+all other keys accept their declared scalar types.
 
 ``get_settings()`` is the production entry point. It caches the loaded
 :class:`Settings` and transparently reloads when the relevant
@@ -110,7 +112,18 @@ DIRECTORY_FIELDS = frozenset(
     }
 )
 
-_KNOWN_FIELDS = SCALAR_FIELDS | DIRECTORY_FIELDS
+# P4-25: file-path settings with no default (absent means the
+# feature is disabled). Unlike directory settings, an empty value
+# stays ``None`` instead of resolving to a package default.
+FILE_FIELDS = frozenset(
+    {
+        "intel_bundle_path",
+    }
+)
+
+_KNOWN_FIELDS = (
+    SCALAR_FIELDS | DIRECTORY_FIELDS | FILE_FIELDS
+)
 
 
 def env_var_name(field: str) -> str:
@@ -145,6 +158,7 @@ class Settings:
     ollama_url: str = "http://127.0.0.1:11434/api/generate"
     ollama_model: str = "qwen3:14b"
     ollama_timeout: int = 900
+    intel_bundle_path: Path | None = None
 
     @property
     def resolved_rules_dir(self) -> Path:
@@ -434,6 +448,41 @@ def _resolve_directory(
     return default_factory()
 
 
+def _resolve_optional_file(
+    field: str,
+    toml_value: object,
+    path: Path | None,
+) -> Path | None:
+    env_value = _env_value(
+        field
+    )
+
+    if env_value is not None:
+        return Path(
+            env_value
+        ).expanduser().resolve()
+
+    if isinstance(
+        toml_value,
+        str,
+    ):
+        return Path(
+            toml_value
+        ).expanduser().resolve()
+
+    if toml_value is not None:
+        raise _invalid_toml(
+            path
+            if path is not None
+            else Path("<config>"),
+            field,
+            toml_value,
+            "a string path",
+        )
+
+    return None
+
+
 def _read_toml(
     path: Path,
 ) -> dict[str, object]:
@@ -684,6 +733,13 @@ def load_settings(
             ),
             path,
             900,
+        ),
+        intel_bundle_path=_resolve_optional_file(
+            "intel_bundle_path",
+            toml_data.get(
+                "intel_bundle_path"
+            ),
+            path,
         ),
     )
 
