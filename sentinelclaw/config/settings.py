@@ -31,6 +31,7 @@ pcap_port_scan_high_threshold
                          SENTINELCLAW_PCAP_PORT_SCAN_HIGH_THRESHOLD
 pcap_flow_high_volume    SENTINELCLAW_PCAP_FLOW_HIGH_VOLUME
 logon_failure_threshold  SENTINELCLAW_LOGON_FAILURE_THRESHOLD
+report_max_findings      SENTINELCLAW_REPORT_MAX_FINDINGS
 max_windows_events       SENTINELCLAW_MAX_WINDOWS_EVENTS
 max_events_print         SENTINELCLAW_MAX_EVENTS_PRINT
 max_file_analysis_size   SENTINELCLAW_MAX_FILE_ANALYSIS_SIZE
@@ -77,6 +78,7 @@ SCALAR_FIELDS = frozenset(
         "pcap_port_scan_high_threshold",
         "pcap_flow_high_volume",
         "logon_failure_threshold",
+        "report_max_findings",
         "max_windows_events",
         "max_events_print",
         "max_file_analysis_size",
@@ -117,6 +119,7 @@ class Settings:
     pcap_port_scan_high_threshold: int = 100
     pcap_flow_high_volume: int = 5000
     logon_failure_threshold: int = 5
+    report_max_findings: int = 50
     max_windows_events: int = 200
     max_events_print: int = 100
     max_file_analysis_size: int = 100 * 1024 * 1024
@@ -537,6 +540,14 @@ def load_settings(
             ),
             path,
             5,
+        ),
+        report_max_findings=_resolve_int(
+            "report_max_findings",
+            toml_data.get(
+                "report_max_findings"
+            ),
+            path,
+            50,
         ),
         max_windows_events=_resolve_int(
             "max_windows_events",

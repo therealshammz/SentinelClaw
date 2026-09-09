@@ -30,6 +30,11 @@ VALID_SEVERITIES = frozenset(
     SEVERITY_ORDER
 )
 
+# P3-18: the machine-readable report schema. Every report dict emitted
+# by ``run_scan`` and every scan-state record written to the data
+# directory carries this version so parsers can detect schema changes.
+REPORT_SCHEMA_VERSION = "1.0.0"
+
 SEVERITY_SCORES = {
     "info": 0,
     "low": 1,

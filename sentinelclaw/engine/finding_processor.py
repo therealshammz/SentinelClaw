@@ -343,6 +343,21 @@ def merge_findings(
             secondary["confidence"]
         )
 
+    # P3-20: keep rule provenance (source file + status metadata) when
+    # the merged survivor lacks it, so deduplicated findings still
+    # attribute detections to the rule file that produced them.
+    for field in (
+        "rule_source",
+        "rule_status",
+    ):
+        if (
+            not primary.get(field)
+            and secondary.get(field)
+        ):
+            primary[field] = (
+                secondary[field]
+            )
+
     return primary
 
 

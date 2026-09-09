@@ -241,9 +241,16 @@ def load_rule_file(file_path: str | Path) -> list[dict]:
 
             continue
 
-        validated.append(
-            rule
-        )
+        stamped = dict(rule)
+
+        # P3-20: rule provenance. Stamp every loaded rule with the YAML
+        # file it came from so findings created from the rule (and the
+        # reports that carry them) can name the exact source rule file.
+        # The stamp is applied after validation so it never masks a
+        # schema problem inside the rule itself.
+        stamped["source_file"] = str(path)
+
+        validated.append(stamped)
 
     return validated
 
@@ -1184,6 +1191,28 @@ def create_finding(
     if confidence is not None:
         finding["confidence"] = (
             confidence
+        )
+
+    # P3-20: rule provenance. Findings carry the source rule file and
+    # status metadata so reports can attribute a detection to the exact
+    # rule that produced it. Both are optional -- rules built inline by
+    # tests carry neither.
+    rule_source = rule.get(
+        "source_file"
+    )
+
+    if rule_source:
+        finding["rule_source"] = str(
+            rule_source
+        )
+
+    rule_status = rule.get(
+        "status"
+    )
+
+    if rule_status:
+        finding["rule_status"] = str(
+            rule_status
         )
 
     return finding

@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import csv
 import html
+import io
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sentinelclaw.config.constants import SEVERITY_RANK
+from sentinelclaw.config.constants import (
+    REPORT_SCHEMA_VERSION,
+    SEVERITY_RANK,
+)
+from sentinelclaw.config.settings import get_settings
 
 
 def _safe(value: Any) -> str:
@@ -75,6 +81,108 @@ def _sorted_findings(findings: list[dict]) -> list[dict]:
         ),
         reverse=True,
     )
+
+
+def _get_incidents(report: dict) -> list[dict]:
+    incidents = report.get("incidents", [])
+
+    if not isinstance(
+        incidents,
+        list,
+    ):
+        return []
+
+    return [
+        incident
+        for incident in incidents
+        if isinstance(
+            incident,
+            dict,
+        )
+    ]
+
+
+def _finding_timestamp(finding: dict) -> str:
+    """Best-effort finding timestamp from the finding or its evidence."""
+    value = finding.get("timestamp")
+
+    if value:
+        return str(value)
+
+    evidence = finding.get("evidence")
+
+    if isinstance(
+        evidence,
+        dict,
+    ):
+        value = (
+            evidence.get("timestamp")
+            or evidence.get("create_time")
+        )
+
+        if value:
+            return str(value)
+
+    return ""
+
+
+def compute_mitre_coverage(
+    findings: list[dict],
+) -> dict[str, dict[str, int]]:
+    """Map MITRE tactic to ``{technique: finding count}`` across findings.
+
+    Findings carry MITRE data either as a dict (``tactic``/``technique``/
+    ``name``) or, for older detectors, as a bare technique string. The
+    result is ordered by first appearance so output stays deterministic.
+    """
+    coverage: dict[
+        str,
+        dict[str, int],
+    ] = {}
+
+    for finding in findings:
+        mitre = finding.get("mitre")
+
+        if isinstance(
+            mitre,
+            dict,
+        ):
+            tactic = str(
+                mitre.get("tactic")
+                or "Unmapped"
+            )
+
+            technique = str(
+                mitre.get("technique")
+                or "Unknown"
+            )
+
+        elif (
+            isinstance(
+                mitre,
+                str,
+            )
+            and mitre.strip()
+        ):
+            tactic = "Unmapped"
+            technique = mitre
+        else:
+            continue
+
+        technique_counts = coverage.setdefault(
+            tactic,
+            {},
+        )
+
+        technique_counts[technique] = (
+            technique_counts.get(
+                technique,
+                0,
+            )
+            + 1
+        )
+
+    return coverage
 
 
 def build_executive_assessment(report: dict) -> dict:
@@ -275,16 +383,254 @@ def build_executive_assessment(report: dict) -> dict:
 
 
 def generate_json_report(report: dict) -> str:
+    export = dict(report)
+
+    # P3-18/P3-20: the on-disk JSON report carries the schema version
+    # and the MITRE coverage summary alongside the scan itself. The
+    # ``run_scan`` dict is left untouched (its key set is frozen).
+    export.setdefault(
+        "schema_version",
+        REPORT_SCHEMA_VERSION,
+    )
+
+    export["mitre_coverage"] = compute_mitre_coverage(
+        _get_findings(report)
+    )
+
     return json.dumps(
-        report,
+        export,
         indent=2,
         default=str,
     )
 
 
+def _scan_metadata_line(report: dict) -> dict:
+    """Build the first JSONL line: scan metadata + schema version."""
+    return {
+        "type": "scan",
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "scan": report.get(
+            "scan",
+            {},
+        ),
+        "summary": report.get(
+            "summary",
+            {},
+        ),
+        "risk": report.get(
+            "risk",
+            {},
+        ),
+        "collector_status": report.get(
+            "collector_status",
+            {},
+        ),
+        "system": report.get(
+            "system",
+            {},
+        ),
+        "mitre_coverage": compute_mitre_coverage(
+            _get_findings(report)
+        ),
+    }
+
+
+def generate_jsonl_report(report: dict) -> str:
+    """Emit one JSON object per line: scan, then findings, then incidents.
+
+    Findings and incidents are top-level entities (one object per line)
+    rather than nested under the scan metadata, so downstream parsers
+    can stream them line by line.
+    """
+    lines = [
+        json.dumps(
+            _scan_metadata_line(report),
+            ensure_ascii=False,
+            default=str,
+        )
+    ]
+
+    for finding in _get_findings(report):
+        item = dict(finding)
+        item["type"] = "finding"
+
+        lines.append(
+            json.dumps(
+                item,
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+
+    for incident in _get_incidents(report):
+        item = dict(incident)
+        item["type"] = "incident"
+
+        lines.append(
+            json.dumps(
+                item,
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+FINDING_CSV_COLUMNS = (
+    "id",
+    "severity",
+    "title",
+    "category",
+    "source",
+    "mitre",
+    "timestamp",
+)
+
+INCIDENT_CSV_COLUMNS = (
+    "incident_id",
+    "severity",
+    "title",
+    "confidence",
+    "finding_count",
+    "related_rule_ids",
+)
+
+
+def _finding_csv_id(finding: dict) -> str:
+    return str(
+        finding.get("rule_id")
+        or finding.get("id")
+        or ""
+    )
+
+
+def _finding_source(finding: dict) -> str:
+    source = finding.get("source")
+
+    if isinstance(
+        source,
+        list,
+    ):
+        return " ".join(
+            str(item)
+            for item in source
+        )
+
+    return _safe(source)
+
+
+def _mitre_text(finding: dict) -> str:
+    mitre = finding.get("mitre")
+
+    if isinstance(
+        mitre,
+        dict,
+    ):
+        technique = mitre.get("technique")
+        name = mitre.get("name")
+
+        if technique and name:
+            return f"{technique} {name}"
+
+        if technique:
+            return str(technique)
+
+        return json.dumps(
+            mitre,
+            ensure_ascii=False,
+            default=str,
+        )
+
+    return _safe(mitre)
+
+
+def generate_csv_report(report: dict) -> str:
+    """Render findings and incidents as two CSV tables in one document."""
+    output = io.StringIO()
+
+    findings_writer = csv.DictWriter(
+        output,
+        fieldnames=FINDING_CSV_COLUMNS,
+    )
+
+    findings_writer.writeheader()
+
+    for finding in _sorted_findings(
+        _get_findings(report)
+    ):
+        findings_writer.writerow(
+            {
+                "id": _finding_csv_id(finding),
+                "severity": _safe(
+                    finding.get("severity")
+                ),
+                "title": _safe(
+                    finding.get("title")
+                ),
+                "category": _safe(
+                    finding.get("category")
+                ),
+                "source": _finding_source(finding),
+                "mitre": _mitre_text(finding),
+                "timestamp": _finding_timestamp(
+                    finding
+                ),
+            }
+        )
+
+    output.write("\n")
+
+    incidents_writer = csv.DictWriter(
+        output,
+        fieldnames=INCIDENT_CSV_COLUMNS,
+    )
+
+    incidents_writer.writeheader()
+
+    for incident in _get_incidents(report):
+        incidents_writer.writerow(
+            {
+                "incident_id": _safe(
+                    incident.get("incident_id")
+                ),
+                "severity": _safe(
+                    incident.get("severity")
+                ),
+                "title": _safe(
+                    incident.get("title")
+                ),
+                "confidence": _safe(
+                    incident.get("confidence")
+                ),
+                "finding_count": _safe(
+                    incident.get("finding_count")
+                ),
+                "related_rule_ids": " ".join(
+                    str(item)
+                    for item in (
+                        incident.get("related_rule_ids")
+                        or []
+                    )
+                ),
+            }
+        )
+
+    return output.getvalue()
+
+
 def generate_text_report(report: dict) -> str:
     findings = _get_findings(report)
     findings = _sorted_findings(findings)
+
+    max_findings = max(
+        1,
+        int(get_settings().report_max_findings),
+    )
+
+    mitre_coverage = compute_mitre_coverage(
+        findings
+    )
 
     incidents = report.get("incidents", [])
     timeline = report.get("timeline", [])
@@ -420,6 +766,27 @@ def generate_text_report(report: dict) -> str:
     )
 
     lines.append("")
+    lines.append("MITRE ATT&CK COVERAGE")
+    lines.append("-" * 80)
+
+    if not mitre_coverage:
+        lines.append(
+            "No MITRE mappings in findings."
+        )
+    else:
+        for tactic in mitre_coverage:
+            lines.append(
+                f"Tactic: {tactic}"
+            )
+
+            for technique, count in sorted(
+                mitre_coverage[tactic].items()
+            ):
+                lines.append(
+                    f"  {technique}: {count} finding(s)"
+                )
+
+    lines.append("")
     lines.append("SYSTEM INFORMATION")
     lines.append("-" * 80)
 
@@ -443,7 +810,7 @@ def generate_text_report(report: dict) -> str:
         )
 
     for index, finding in enumerate(
-        findings,
+        findings[:max_findings],
         start=1,
     ):
         lines.append("")
@@ -493,6 +860,26 @@ def generate_text_report(report: dict) -> str:
             )
         )
 
+        rule_source = finding.get(
+            "rule_source"
+        )
+
+        if rule_source:
+            lines.append(
+                "Rule Source : "
+                + _safe(rule_source)
+            )
+
+        rule_status = finding.get(
+            "rule_status"
+        )
+
+        if rule_status:
+            lines.append(
+                "Rule Status : "
+                + _safe(rule_status)
+            )
+
         description = (
             finding.get("description")
             or finding.get("reason")
@@ -524,6 +911,15 @@ def generate_text_report(report: dict) -> str:
                 )
             )
 
+    if len(findings) > max_findings:
+        lines.append("")
+
+        lines.append(
+            f"... {len(findings) - max_findings} more "
+            "finding(s) not shown "
+            "(report_max_findings cap)."
+        )
+
     lines.append("")
     lines.append("CORRELATED INCIDENTS")
     lines.append("-" * 80)
@@ -534,7 +930,7 @@ def generate_text_report(report: dict) -> str:
         )
 
     for index, incident in enumerate(
-        incidents,
+        incidents[:max_findings],
         start=1,
     ):
         lines.append("")
@@ -572,6 +968,15 @@ def generate_text_report(report: dict) -> str:
                     "Unknown",
                 )
             )
+        )
+
+    if len(incidents) > max_findings:
+        lines.append("")
+
+        lines.append(
+            f"... {len(incidents) - max_findings} more "
+            "incident(s) not shown "
+            "(report_max_findings cap)."
         )
 
     lines.append("")
@@ -649,6 +1054,10 @@ def generate_html_report(report: dict) -> str:
     counts = _finding_counts(findings)
     executive = build_executive_assessment(report)
 
+    mitre_coverage = compute_mitre_coverage(
+        findings
+    )
+
     def esc(value: Any) -> str:
         return html.escape(
             _safe(value)
@@ -680,10 +1089,37 @@ def generate_html_report(report: dict) -> str:
             else ""
         )
 
+        provenance = ""
+
+        rule_source = finding.get(
+            "rule_source"
+        )
+
+        if rule_source:
+            provenance += (
+                '<div class="small">'
+                + esc(rule_source)
+                + "</div>"
+            )
+
+        rule_status = finding.get(
+            "rule_status"
+        )
+
+        if rule_status:
+            provenance += (
+                '<div class="small">status: '
+                + esc(rule_status)
+                + "</div>"
+            )
+
         finding_rows.append(
             f"""
             <tr>
-                <td>{esc(finding.get("rule_id", "Unknown"))}</td>
+                <td>
+                    {esc(finding.get("rule_id", "Unknown"))}
+                    {provenance}
+                </td>
                 <td>
                     <span class="severity {esc(str(finding.get("severity", "info")).lower())}">
                         {esc(str(finding.get("severity", "info")).upper())}
@@ -697,19 +1133,94 @@ def generate_html_report(report: dict) -> str:
             """
         )
 
-    incident_rows: list[str] = []
+    incident_drilldown: list[str] = []
 
     for incident in incidents:
-        incident_rows.append(
+        incident_id = esc(
+            incident.get(
+                "incident_id",
+                "Unknown",
+            )
+        )
+
+        member_rows = "".join(
+            (
+                "<tr>"
+                f"<td>{esc(finding.get('rule_id', 'Unknown'))}</td>"
+                f"<td>{esc(str(finding.get('severity', 'info')).upper())}</td>"
+                f"<td>{esc(finding.get('title', 'Unknown'))}</td>"
+                f"<td>{esc(finding.get('rule_status', ''))}</td>"
+                "</tr>"
+            )
+            for finding in incident.get(
+                "findings",
+                [],
+            )
+            if isinstance(
+                finding,
+                dict,
+            )
+        )
+
+        incident_events = [
+            event
+            for event in timeline
+            if str(
+                event.get("incident_id")
+            ) == str(
+                incident.get("incident_id")
+            )
+        ]
+
+        event_rows = "".join(
+            (
+                "<tr>"
+                f"<td>{esc(event.get('timestamp', ''))}</td>"
+                f"<td>{esc(event.get('title', ''))}</td>"
+                "</tr>"
+            )
+            for event in incident_events
+        )
+
+        incident_drilldown.append(
             f"""
-            <tr>
-                <td>{esc(incident.get("incident_id", "Unknown"))}</td>
-                <td>{esc(str(incident.get("severity", "info")).upper())}</td>
-                <td>{esc(incident.get("title", "Unknown Incident"))}</td>
-                <td>{esc(incident.get("confidence", "Unknown"))}</td>
-            </tr>
+            <details class="incident">
+                <summary>
+                    {esc(incident.get('title', 'Unknown Incident'))}
+                    <span class="severity {esc(str(incident.get('severity', 'info')).lower())}">
+                        {esc(str(incident.get('severity', 'info')).upper())}
+                    </span>
+                </summary>
+                <div class="small">
+                    Incident {incident_id} |
+                    Confidence: {esc(incident.get('confidence', 'Unknown'))}
+                </div>
+                <table>
+                    <tr><th>Rule</th><th>Severity</th><th>Finding</th><th>Status</th></tr>
+                    {member_rows or '<tr><td colspan="4">No member findings recorded.</td></tr>'}
+                </table>
+                <h4>Timeline events for this incident</h4>
+                <table>
+                    <tr><th>Timestamp</th><th>Event</th></tr>
+                    {event_rows or '<tr><td colspan="2">No timeline events recorded.</td></tr>'}
+                </table>
+            </details>
             """
         )
+
+    mitre_rows = "".join(
+        (
+            "<tr>"
+            f"<td>{esc(tactic)}</td>"
+            f"<td>{esc(technique)}</td>"
+            f"<td>{count}</td>"
+            "</tr>"
+        )
+        for tactic, techniques in mitre_coverage.items()
+        for technique, count in sorted(
+            techniques.items()
+        )
+    )
 
     timeline_rows: list[str] = []
 
@@ -970,6 +1481,24 @@ li {{
 </div>
 
 <div class="card">
+    <h2>MITRE ATT&amp;CK Coverage</h2>
+
+    <table>
+        <tr>
+            <th>Tactic</th>
+            <th>Technique</th>
+            <th>Findings</th>
+        </tr>
+
+        {
+            mitre_rows
+            if mitre_rows
+            else '<tr><td colspan="3">No MITRE mappings in findings.</td></tr>'
+        }
+    </table>
+</div>
+
+<div class="card">
     <h2>Scan Statistics</h2>
 
     <table>
@@ -1040,22 +1569,13 @@ li {{
 </div>
 
 <div class="card">
-    <h2>Correlated Incidents</h2>
+    <h2>Incident Drill-down</h2>
 
-    <table>
-        <tr>
-            <th>Incident ID</th>
-            <th>Severity</th>
-            <th>Title</th>
-            <th>Confidence</th>
-        </tr>
-
-        {
-            "".join(incident_rows)
-            if incident_rows
-            else '<tr><td colspan="4">No correlated incidents detected.</td></tr>'
-        }
-    </table>
+    {
+        "".join(incident_drilldown)
+        if incident_drilldown
+        else '<p class="small">No correlated incidents detected.</p>'
+    }
 </div>
 
 <div class="card">
@@ -1183,5 +1703,31 @@ def save_report_formats(
         )
 
         created["html"] = path
+
+    if "csv" in formats:
+        path = (
+            output_path
+            / f"sentinelclaw_{timestamp}.csv"
+        )
+
+        path.write_text(
+            generate_csv_report(report),
+            encoding="utf-8",
+        )
+
+        created["csv"] = path
+
+    if "jsonl" in formats:
+        path = (
+            output_path
+            / f"sentinelclaw_{timestamp}.jsonl"
+        )
+
+        path.write_text(
+            generate_jsonl_report(report),
+            encoding="utf-8",
+        )
+
+        created["jsonl"] = path
 
     return created

@@ -4,7 +4,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,8 @@ from sentinelclaw.ai.qwen_analyzer import analyze_report_with_qwen
 from sentinelclaw.config.logging import configure_logging
 
 from sentinelclaw.config.paths import PACKAGE_DIRECTORY
+
+from sentinelclaw.config.constants import REPORT_SCHEMA_VERSION
 
 from sentinelclaw.config.settings import get_settings
 
@@ -39,7 +41,10 @@ from sentinelclaw.engine.timeline_engine import build_timeline
 
 from sentinelclaw.models.findings import calculate_risk_score
 
-from sentinelclaw.reporting.report_generator import save_report_formats
+from sentinelclaw.reporting.report_generator import (
+    generate_jsonl_report,
+    save_report_formats,
+)
 
 from sentinelclaw.sigma.importer import (
     SIGMA_RELEASE_TAG,
@@ -69,6 +74,23 @@ from sentinelclaw.ui.console import (
     print_pcap_dashboard,
 )
 
+from sentinelclaw.state.hunting import (
+    cmd_accounts,
+    cmd_diff,
+    cmd_history,
+    cmd_search,
+    cmd_stats,
+    cmd_tree,
+    cmd_watch,
+    print_scan_delta_vs_baselines,
+)
+from sentinelclaw.state.store import (
+    append_scan_record,
+    latest_record,
+    record_from_report,
+    records_since,
+)
+
 from sentinelclaw.ui.progress import ScanProgress
 
 
@@ -85,6 +107,30 @@ def print_json(data: Any) -> None:
             default=str,
         )
     )
+
+
+def parse_since(value: str) -> datetime:
+    """Parse a ``--since`` ISO timestamp into a tz-aware datetime."""
+    text = value.strip()
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    try:
+        parsed = datetime.fromisoformat(
+            text
+        )
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Invalid --since timestamp: {value}"
+        ) from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(
+            tzinfo=timezone.utc
+        )
+
+    return parsed
 
 
 def print_cli_error(
@@ -1490,9 +1536,76 @@ def execute_command(
             include_raw=args.json_raw,
         )
 
-        print_json(
+        baselines: list[dict] = []
+
+        if getattr(
+            args,
+            "since",
+            None,
+        ):
+            cutoff = parse_since(
+                args.since
+            )
+
+            baselines = records_since(
+                cutoff
+            )
+        elif getattr(
+            args,
+            "last",
+            False,
+        ):
+            baseline = latest_record()
+
+            if baseline is not None:
+                baselines = [
+                    baseline
+                ]
+
+        # P3-17: persist the bounded scan record (CLI layer, so
+        # ``run_scan`` and its tests stay untouched). The baseline is
+        # captured before appending so the fresh record never diffs
+        # against itself.
+        state_record = record_from_report(
             report
         )
+
+        record_id = append_scan_record(
+            state_record
+        )
+
+        state_record["record_id"] = record_id
+
+        if getattr(
+            args,
+            "format",
+            None,
+        ) == "jsonl":
+            print(
+                generate_jsonl_report(report),
+                end="",
+            )
+        else:
+            # P3-18: the printed report carries the schema version on a
+            # shallow copy -- ``run_scan``'s own dict keeps its frozen
+            # key set (tests assert exact equality).
+            export = dict(report)
+
+            export.setdefault(
+                "schema_version",
+                REPORT_SCHEMA_VERSION,
+            )
+
+            print_json(
+                export
+            )
+
+        if baselines:
+            print_scan_delta_vs_baselines(
+                baselines,
+                report,
+                target_record=state_record,
+            )
 
     elif args.command in {
         "summary",
@@ -1522,6 +1635,42 @@ def execute_command(
             report,
             created_files,
         )
+
+    elif args.command == "history":
+        cmd_history()
+
+    elif args.command == "diff":
+        if not getattr(
+            args,
+            "last",
+            False,
+        ) and (
+            args.id1 is None
+            or args.id2 is None
+        ):
+            print_cli_error(
+                "diff needs two record ids or --last.",
+                "List records with 'sentinelclaw history'.",
+            )
+
+            raise SystemExit(1)
+
+        cmd_diff(args)
+
+    elif args.command == "watch":
+        cmd_watch(args)
+
+    elif args.command == "search":
+        cmd_search(args)
+
+    elif args.command == "accounts":
+        cmd_accounts()
+
+    elif args.command == "tree":
+        cmd_tree(args)
+
+    elif args.command == "stats":
+        cmd_stats()
 
     elif args.command == "rules":
         if getattr(args, "rules_subcommand", None) == "import":
@@ -1654,6 +1803,38 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    scan_parser.add_argument(
+        "--format",
+        choices=[
+            "json",
+            "jsonl",
+        ],
+        default="json",
+        help=(
+            "Output format for the scan report "
+            "(default: json; jsonl emits one "
+            "JSON object per line)"
+        ),
+    )
+
+    scan_parser.add_argument(
+        "--since",
+        default=None,
+        help=(
+            "ISO timestamp; show new/closed findings "
+            "since records at or after this time"
+        ),
+    )
+
+    scan_parser.add_argument(
+        "--last",
+        action="store_true",
+        help=(
+            "Show new/closed findings versus the "
+            "previous scan record"
+        ),
+    )
+
     dashboard_parser = (
         subparsers.add_parser(
             "dashboard",
@@ -1705,6 +1886,8 @@ def build_parser() -> argparse.ArgumentParser:
             "json",
             "text",
             "html",
+            "csv",
+            "jsonl",
             "all",
         ],
         default="all",
@@ -1786,6 +1969,121 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Show detailed incident information"
+        ),
+    )
+
+    subparsers.add_parser(
+        "history",
+        help=(
+            "List scan records from the local "
+            "scan-state store"
+        ),
+    )
+
+    diff_parser = subparsers.add_parser(
+        "diff",
+        help=(
+            "Show new/closed findings between two "
+            "scan records (or the last two)"
+        ),
+    )
+
+    diff_parser.add_argument(
+        "id1",
+        nargs="?",
+        default=None,
+        help="Baseline record id",
+    )
+
+    diff_parser.add_argument(
+        "id2",
+        nargs="?",
+        default=None,
+        help="Target record id",
+    )
+
+    diff_parser.add_argument(
+        "--last",
+        action="store_true",
+        help=(
+            "Diff the two most recent records"
+        ),
+    )
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help=(
+            "Run scans in a loop, recording state "
+            "and printing finding deltas"
+        ),
+    )
+
+    watch_parser.add_argument(
+        "--interval",
+        type=int,
+        default=30,
+        help=(
+            "Seconds between scans (default: 30)"
+        ),
+    )
+
+    watch_parser.add_argument(
+        "--count",
+        type=int,
+        default=0,
+        help=(
+            "Number of cycles to run "
+            "(default: 0 = until interrupted)"
+        ),
+    )
+
+    search_parser = subparsers.add_parser(
+        "search",
+        help=(
+            "Search findings and incidents across "
+            "scan-state records"
+        ),
+    )
+
+    search_parser.add_argument(
+        "keyword",
+        help="Case-insensitive keyword to search for",
+    )
+
+    search_parser.add_argument(
+        "--state",
+        default=None,
+        help=(
+            "Restrict the search to one record id"
+        ),
+    )
+
+    subparsers.add_parser(
+        "accounts",
+        help=(
+            "Summarize logon activity from windows "
+            "events in scan state"
+        ),
+    )
+
+    tree_parser = subparsers.add_parser(
+        "tree",
+        help=(
+            "Render the process tree for one "
+            "incident's member findings"
+        ),
+    )
+
+    tree_parser.add_argument(
+        "incident_id",
+        help="Incident id to drill into",
+    )
+
+    subparsers.add_parser(
+        "stats",
+        help=(
+            "Event-ID frequency and finding-count "
+            "statistics from scan state"
         ),
     )
 

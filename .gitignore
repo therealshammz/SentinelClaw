@@ -44,6 +44,7 @@ desktop.ini
 
 # SentinelClaw runtime output
 reports/
+data/
 
 # Local environment files
 .env
