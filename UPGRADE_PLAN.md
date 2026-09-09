@@ -1,6 +1,6 @@
 # SentinelClaw — Upgrade & Improvement Plan
 
-Status: proposal (no code changed). Generated 2026-09-09 from a full codebase review + landscape comparison against Hayabusa (Yamato Security), osquery, SigmaHQ/pySigma, Wazuh, and Velociraptor.
+Status: **COMPLETE — fully implemented 2026-09-09** (all 31 items, phases 0–6, on branch `feat/upgrade-phase1`, PR #4). This document is the historical rationale and landscape research; the authoritative record of what was done is `UPGRADE_TRACKER.md`. Generated 2026-09-09 from a full codebase review + landscape comparison against Hayabusa (Yamato Security), osquery, SigmaHQ/pySigma, Wazuh, and Velociraptor.
 
 **North star:** make SentinelClaw *the* credible local-first deterministic scanner it already claims to be: (1) detection output that is internally consistent and correct, (2) cross-platform signal parity (Linux is currently ~zero-signal), (3) an open, standard-adjacent rule format with a real rule library, (4) stateful hunt workflows (baseline, delta, timeline), and (5) a hardened, honest AI advisory layer.
 
