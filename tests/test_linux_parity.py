@@ -272,6 +272,10 @@ def test_deleted_binary_fixture_yields_del_001() -> None:
     assert deleted[0]["mitre"]["technique"] == ("T1070.004")
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="deleted-binary probe is Linux-only (/proc)",
+)
 def test_probe_deleted_executable(
     monkeypatch,
 ) -> None:
@@ -452,11 +456,11 @@ def test_rule_os_gating_load_and_validation(
 
     on_linux = sys.platform.startswith("linux")
 
-    assert "OS-LIN-001" in loaded_ids
-
     if on_linux:
+        assert "OS-LIN-001" in loaded_ids
         assert "OS-WIN-001" not in loaded_ids
     else:
+        assert "OS-LIN-001" not in loaded_ids
         assert "OS-WIN-001" in loaded_ids
 
     ok, reason = validate_rule(
@@ -487,4 +491,9 @@ def test_rule_matches_current_os_defaults_to_all() -> None:
 
     assert rule_matches_current_os({"os": ["all"]})
 
-    assert not rule_matches_current_os({"os": ["windows"]})
+    if sys.platform.startswith("linux"):
+        assert not rule_matches_current_os({"os": ["windows"]})
+        assert rule_matches_current_os({"os": ["linux"]})
+    else:
+        assert rule_matches_current_os({"os": ["windows"]})
+        assert not rule_matches_current_os({"os": ["linux"]})

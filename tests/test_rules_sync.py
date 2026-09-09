@@ -214,4 +214,4 @@ def test_check_and_sync_cover_nested_sigma_trees(
     )
 
     assert check.returncode == 1
-    assert "sigma/windows/rule.yaml" in check.stdout
+    assert "sigma/windows/rule.yaml" in check.stdout.replace("\\", "/")

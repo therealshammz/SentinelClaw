@@ -1236,6 +1236,10 @@ def test_shipped_sigma_samples_match_converter_output(
     }
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux sigma rule is os-gated to linux",
+)
 def test_shipped_sigma_linux_rule_fires_through_directory_load() -> None:
     rules = load_rule_file(
         get_rules_directory() / "sigma" / "sigma_linux_sshd_failed_password.yaml"
@@ -1383,8 +1387,14 @@ def test_converted_import_rules_load_and_fire(tmp_path) -> None:
 
     # Only the Linux-gated rule loads on this platform; the Windows
     # sigma rule is OS-gated and skipped here (P1-10 behaviour).
+    expected_id = (
+        "7c67e8d1-5f0a-4c2b-9e6d-88f9a2b4d501"
+        if sys.platform.startswith("linux")
+        else "20255a30-2e1d-4f0e-8b2c-7f1b2f4a6b21"
+    )
+
     assert {rule.get("id") for rule in loaded} == {
-        "7c67e8d1-5f0a-4c2b-9e6d-88f9a2b4d501",
+        expected_id,
     }
 
     for rule in loaded:
@@ -1874,6 +1884,10 @@ detection:
     assert len(run_category(rule, [hit], "process")) == 1
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux sigma rule is os-gated to linux",
+)
 def test_sshd_shipped_rule_fires_on_syslog_prefixed_message() -> None:
     from sentinelclaw.config.paths import get_rules_directory
 

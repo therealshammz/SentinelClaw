@@ -120,7 +120,13 @@ def test_skipped_large_file_does_not_break_file_detector(
         result
     )
 
-    assert findings == []
+    # On Windows the temp path matches the user-writable heuristic
+    # (FILE-002); on Linux it does not. Either way the detector must
+    # not crash and must not emit anything beyond that heuristic.
+    assert all(
+        finding.get("rule_id") == "FILE-002"
+        for finding in findings
+    )
 
 
 def test_new_streaming_settings_defaults_and_env(

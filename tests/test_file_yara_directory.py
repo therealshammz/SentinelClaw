@@ -509,7 +509,7 @@ def test_phase4_settings_defaults_and_env(
 
     assert settings.yara_rules_dir == Path(
         "/opt/yara-rules"
-    )
+    ).expanduser().resolve()
 
 
 def test_analyze_file_keeps_additive_pe_key(
