@@ -347,6 +347,73 @@ def analyze_linux_process(
             )
 
 
+def _deleted_executable_suspicious(
+    process: dict,
+) -> bool:
+    """Return whether a deleted-executable process carries suspicious context.
+
+    A deleted binary alone is common on Linux (package managers unlink
+    old binaries while processes keep running). DEL-001 is only emitted
+    when the process also shows suspicious context: a known-abused tool
+    name, a suspicious parent, encoded/download-execute arguments, or an
+    executable running from a user-writable location.
+    """
+    name = (process.get("name") or "").lower()
+
+    parent_name = (process.get("parent_name") or "").lower()
+
+    executable = (process.get("executable") or "").lower()
+
+    cmd = command_line_text(process)
+
+    if name in (
+        HIGH_RISK_TOOL_NAMES
+        | LOLBINS
+        | LINUX_LOLBINS
+    ):
+        return True
+
+    if parent_name in (
+        LINUX_SUSPICIOUS_PARENTS
+        | OFFICE_PARENT_PROCESSES
+        | BROWSER_PARENT_PROCESSES
+        | SCRIPT_OR_SHELL_PROCESSES
+    ):
+        return True
+
+    if any(
+        marker in cmd
+        for marker in LINUX_ENCODED_MARKERS
+    ):
+        return True
+
+    if _DOWNLOAD_EXEC_PATTERN.search(
+        cmd
+    ):
+        return True
+
+    if _NET_SHELL_PATTERN.search(
+        cmd
+    ):
+        return True
+
+    if any(
+        argument in cmd
+        for argument in POWERSHELL_SUSPICIOUS_ARGUMENTS
+    ):
+        return True
+
+    if executable.startswith(
+        LINUX_WRITABLE_DIRECTORIES
+    ):
+        return True
+
+    return any(
+        directory in executable
+        for directory in SUSPICIOUS_DIRECTORIES
+    )
+
+
 def analyze_processes(
     processes: list[dict],
 ) -> list[dict]:
@@ -549,7 +616,12 @@ def analyze_processes(
                 cmd,
             )
 
-        if process.get("exe_deleted"):
+        if (
+            process.get("exe_deleted")
+            and _deleted_executable_suspicious(
+                process
+            )
+        ):
             add_finding(
                 findings,
                 "medium",

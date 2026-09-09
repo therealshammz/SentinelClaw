@@ -267,6 +267,52 @@ def test_auth_log_fixture_yields_auth_findings(
     assert aggregate[0]["evidence"]["count"] == 6
 
 
+def test_del001_requires_suspicious_context() -> None:
+    """DEL-001 must not fire for benign deleted binaries.
+
+    Package upgrades unlink old binaries while processes keep running
+    (e.g. speech-dispatcher modules); a deleted executable alone is not
+    a signal. DEL-001 requires suspicious context: a known-abused tool,
+    a suspicious parent, encoded/download-execute args, or a
+    user-writable executable path.
+    """
+    benign_upgrade = {
+        "pid": 12694,
+        "name": "sd_espeak-ng-mb",
+        "parent_name": "speech-dispatcher",
+        "executable": None,
+        "exe_deleted": True,
+        "command_line": [],
+    }
+
+    suspicious_deleted = {
+        "pid": 31340,
+        "name": "bash",
+        "parent_name": "init",
+        "executable": "/tmp/evil.sh",
+        "exe_deleted": True,
+        "command_line": [
+            "/tmp/evil.sh",
+        ],
+    }
+
+    findings = analyze_processes(
+        [
+            benign_upgrade,
+            suspicious_deleted,
+        ]
+    )
+
+    del001 = [
+        finding
+        for finding in findings
+        if finding.get("rule_id") == "DEL-001"
+    ]
+
+    assert len(del001) == 1
+    assert del001[0]["pid"] == 31340
+
+
 @pytest.mark.skipif(
     sys.platform.startswith("win"),
     reason="Linux persistence fixtures require POSIX-style records",
