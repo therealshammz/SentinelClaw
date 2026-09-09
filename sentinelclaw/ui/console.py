@@ -957,6 +957,161 @@ def print_file_dashboard(
     print()
 
 
+def print_log_dashboard(
+    report: dict,
+    verbose: bool = False,
+) -> None:
+    if "error" in report:
+        banner(
+            "SENTINELCLAW LOG ANALYSIS"
+        )
+
+        print()
+        print(
+            f"[ERROR] "
+            f"{report['error']}"
+        )
+        print()
+        return
+
+    log_data = report.get(
+        "log",
+        {},
+    )
+
+    risk = report.get(
+        "risk",
+        {},
+    )
+
+    findings = report.get(
+        "findings",
+        [],
+    )
+
+    incidents = report.get(
+        "incidents",
+        [],
+    )
+
+    banner(
+        "SENTINELCLAW LOG ANALYSIS"
+    )
+
+    section(
+        "Log file"
+    )
+
+    status(
+        "File",
+        log_data.get(
+            "file",
+            "Unknown",
+        ),
+    )
+
+    status(
+        "Total lines",
+        log_data.get(
+            "total_lines",
+            0,
+        ),
+    )
+
+    status(
+        "Suspicious matches",
+        log_data.get(
+            "suspicious_matches",
+            0,
+        ),
+    )
+
+    status(
+        "Events parsed",
+        len(
+            log_data.get(
+                "events",
+                [],
+            )
+        ),
+    )
+
+    section(
+        "Risk"
+    )
+
+    status(
+        "Overall",
+        risk_label(
+            risk.get(
+                "score",
+                0,
+            ),
+            risk.get(
+                "level",
+                "informational",
+            ),
+        ),
+    )
+
+    status(
+        "Findings",
+        len(
+            findings
+        ),
+    )
+
+    status(
+        "Incidents",
+        len(
+            incidents
+        ),
+    )
+
+    section(
+        "Findings"
+    )
+
+    if not findings:
+        print(
+            "[+] No log indicators detected."
+        )
+
+    else:
+        for finding in findings:
+            compact_finding(
+                finding,
+                verbose=verbose,
+            )
+
+    section(
+        "Incidents"
+    )
+
+    if not incidents:
+        print(
+            "[+] No correlated incidents detected."
+        )
+
+    else:
+        for incident in incidents:
+            compact_incident(
+                incident,
+                verbose=verbose,
+            )
+
+    print()
+    print("=" * WIDTH)
+
+    print(
+        "Log findings are indicators "
+        "and require investigation."
+    )
+
+    print("=" * WIDTH)
+    print()
+
+
 def print_incidents_dashboard(
     incidents: list[dict],
     verbose: bool = False,

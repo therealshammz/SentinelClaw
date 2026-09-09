@@ -69,9 +69,8 @@ def analyze_file_findings(
     ).lower()
 
     entropy = file_info.get(
-        "entropy",
-        0.0,
-    )
+        "entropy"
+    ) or 0.0
 
     authenticode = (
         file_info.get("authenticode")

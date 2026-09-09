@@ -7,6 +7,8 @@ from typing import Any
 
 from scapy.all import IP, IPv6, TCP, UDP, PcapReader
 
+from sentinelclaw.config.settings import get_settings
+
 logger = logging.getLogger(
     __name__
 )
@@ -47,6 +49,11 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
             )
         }
 
+    settings = get_settings()
+
+    max_packets = settings.max_pcap_packets
+    max_flows = settings.max_pcap_flows
+
     protocol_counts: Counter[str] = Counter()
     ip_counts: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
@@ -65,9 +72,20 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
 
     packet_samples: list[dict] = []
 
+    truncated = False
+    truncation_reason: str | None = None
+
     try:
         with PcapReader(str(path)) as reader:
             for packet in reader:
+                if packets_total >= max_packets:
+                    truncated = True
+                    truncation_reason = (
+                        f"packet limit reached "
+                        f"({max_packets})"
+                    )
+                    break
+
                 packets_total += 1
 
                 source_ip, destination_ip = normalize_ip(
@@ -166,6 +184,17 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
                         destination_port,
                         protocol,
                     )
+
+                    if (
+                        flow_key not in flows
+                        and len(flows) >= max_flows
+                    ):
+                        truncated = True
+                        truncation_reason = (
+                            f"flow limit reached "
+                            f"({max_flows})"
+                        )
+                        break
 
                     flows[
                         flow_key
@@ -284,10 +313,11 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
 
     logger.debug(
         "Parsed %d packet(s), %d unique flow(s) "
-        "from %s",
+        "from %s (truncated: %s)",
         packets_total,
         len(flows),
         path.name,
+        truncated,
     )
 
     return {
@@ -318,4 +348,6 @@ def analyze_pcap(file_path: str) -> dict[str, Any]:
         "tcp_scan_candidates": tcp_scan_candidates,
         "udp_scan_candidates": udp_scan_candidates,
         "packet_samples": packet_samples,
+        "truncated": truncated,
+        "truncation_reason": truncation_reason,
     }

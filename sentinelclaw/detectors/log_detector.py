@@ -36,6 +36,242 @@ HIGH_RISK_EVENT_IDS = {
     ),
 }
 
+LOG_CLASS_FINDINGS: dict[
+    str,
+    tuple[str, str, str, str, str, dict | None],
+] = {
+    "command_and_control": (
+        "high",
+        "LOG-002",
+        "Command-and-control activity in log",
+        "A log line indicates reverse-shell "
+        "or command-and-control activity.",
+        "medium",
+        {
+            "technique": "T1105",
+            "name": "Ingress Tool Transfer",
+            "tactic": "Command and Control",
+        },
+    ),
+    "credential_access": (
+        "high",
+        "LOG-003",
+        "Credential access activity in log",
+        "A log line indicates credential-dumping "
+        "or credential-access activity.",
+        "medium",
+        {
+            "technique": "T1003",
+            "name": "OS Credential Dumping",
+            "tactic": "Credential Access",
+        },
+    ),
+    "execution": (
+        "medium",
+        "LOG-004",
+        "Scripted or obfuscated execution in log",
+        "A log line indicates scripted or "
+        "obfuscated command execution.",
+        "medium",
+        {
+            "technique": "T1059.001",
+            "name": "PowerShell",
+            "tactic": "Execution",
+        },
+    ),
+    "persistence": (
+        "medium",
+        "LOG-005",
+        "Persistence-related activity in log",
+        "A log line indicates persistence "
+        "mechanism activity.",
+        "medium",
+        {
+            "technique": "T1053.005",
+            "name": "Scheduled Task",
+            "tactic": "Persistence",
+        },
+    ),
+    "reconnaissance": (
+        "low",
+        "LOG-006",
+        "Reconnaissance activity in log",
+        "A log line indicates scanning or "
+        "reconnaissance activity.",
+        "low",
+        {
+            "technique": "T1046",
+            "name": "Network Service Discovery",
+            "tactic": "Discovery",
+        },
+    ),
+    "privilege_escalation": (
+        "medium",
+        "LOG-007",
+        "Privilege escalation activity in log",
+        "A log line indicates privilege "
+        "escalation activity.",
+        "medium",
+        {
+            "technique": "T1068",
+            "name": "Exploitation for "
+            "Privilege Escalation",
+            "tactic": "Privilege Escalation",
+        },
+    ),
+    "generic": (
+        "info",
+        "LOG-008",
+        "Suspicious content indicator in log",
+        "A log line matched a suspicious "
+        "content keyword.",
+        "low",
+        None,
+    ),
+}
+
+
+def analyze_log_events(
+    events: list[dict],
+) -> list[dict]:
+    findings: list[dict] = []
+
+    auth_events = [
+        event
+        for event in events
+        if event.get(
+            "event_class"
+        )
+        == "authentication"
+    ]
+
+    if (
+        len(auth_events)
+        >= get_settings().logon_failure_threshold
+    ):
+        findings.append(
+            {
+                "severity": "medium",
+                "rule_id": "LOG-001",
+                "title": (
+                    "Multiple failed authentication "
+                    "attempts in log"
+                ),
+                "description": (
+                    f"{len(auth_events)} failed "
+                    "authentication events were "
+                    "observed in the analyzed "
+                    "log file."
+                ),
+                "category": "log",
+                "confidence": "medium",
+                "evidence": {
+                    "count": len(
+                        auth_events
+                    ),
+                    "line_numbers": [
+                        event.get(
+                            "line_number"
+                        )
+                        for event in auth_events
+                    ][:20],
+                    "ips": sorted(
+                        {
+                            str(event.get("ip"))
+                            for event in auth_events
+                            if event.get("ip")
+                        }
+                    ),
+                    "hosts": sorted(
+                        {
+                            str(event.get("host"))
+                            for event in auth_events
+                            if event.get("host")
+                        }
+                    ),
+                    "usernames": sorted(
+                        {
+                            str(event.get("username"))
+                            for event in auth_events
+                            if event.get("username")
+                        }
+                    ),
+                },
+                "mitre": {
+                    "technique": "T1110",
+                    "name": "Brute Force",
+                    "tactic": "Credential Access",
+                },
+            }
+        )
+
+    for event in events:
+        event_class = event.get(
+            "event_class"
+        )
+
+        if not event_class:
+            continue
+
+        if event_class == "authentication":
+            continue
+
+        template = LOG_CLASS_FINDINGS.get(
+            event_class
+        )
+
+        if template is None:
+            continue
+
+        (
+            severity,
+            rule_id,
+            title,
+            description,
+            confidence,
+            mitre,
+        ) = template
+
+        findings.append(
+            {
+                "severity": severity,
+                "rule_id": rule_id,
+                "title": title,
+                "description": description,
+                "category": "log",
+                "confidence": confidence,
+                "evidence": {
+                    "line_number": event.get(
+                        "line_number"
+                    ),
+                    "message": event.get(
+                        "message"
+                    ),
+                    "timestamp": event.get(
+                        "timestamp"
+                    ),
+                    "ip": event.get("ip"),
+                    "host": event.get("host"),
+                    "username": event.get(
+                        "username"
+                    ),
+                    "matched_keywords": event.get(
+                        "matched_keywords"
+                    ),
+                },
+                "mitre": mitre,
+            }
+        )
+
+    logger.debug(
+        "Log event detector produced %d "
+        "finding(s) from %d event(s)",
+        len(findings),
+        len(events),
+    )
+
+    return findings
+
 
 def analyze_windows_events(events: list[dict]) -> list[dict]:
     findings = []

@@ -33,6 +33,9 @@ pcap_flow_high_volume    SENTINELCLAW_PCAP_FLOW_HIGH_VOLUME
 logon_failure_threshold  SENTINELCLAW_LOGON_FAILURE_THRESHOLD
 max_windows_events       SENTINELCLAW_MAX_WINDOWS_EVENTS
 max_events_print         SENTINELCLAW_MAX_EVENTS_PRINT
+max_file_analysis_size   SENTINELCLAW_MAX_FILE_ANALYSIS_SIZE
+max_pcap_packets         SENTINELCLAW_MAX_PCAP_PACKETS
+max_pcap_flows           SENTINELCLAW_MAX_PCAP_FLOWS
 ollama_url               SENTINELCLAW_OLLAMA_URL
 ollama_model             SENTINELCLAW_OLLAMA_MODEL
 ollama_timeout           SENTINELCLAW_OLLAMA_TIMEOUT
@@ -75,6 +78,9 @@ SCALAR_FIELDS = frozenset(
         "logon_failure_threshold",
         "max_windows_events",
         "max_events_print",
+        "max_file_analysis_size",
+        "max_pcap_packets",
+        "max_pcap_flows",
         "ollama_url",
         "ollama_model",
         "ollama_timeout",
@@ -111,6 +117,9 @@ class Settings:
     logon_failure_threshold: int = 5
     max_windows_events: int = 200
     max_events_print: int = 100
+    max_file_analysis_size: int = 100 * 1024 * 1024
+    max_pcap_packets: int = 2000000
+    max_pcap_flows: int = 100000
     ollama_url: str = "http://127.0.0.1:11434/api/generate"
     ollama_model: str = "qwen3:14b"
     ollama_timeout: int = 900
@@ -541,6 +550,30 @@ def load_settings(
             ),
             path,
             100,
+        ),
+        max_file_analysis_size=_resolve_int(
+            "max_file_analysis_size",
+            toml_data.get(
+                "max_file_analysis_size"
+            ),
+            path,
+            100 * 1024 * 1024,
+        ),
+        max_pcap_packets=_resolve_int(
+            "max_pcap_packets",
+            toml_data.get(
+                "max_pcap_packets"
+            ),
+            path,
+            2000000,
+        ),
+        max_pcap_flows=_resolve_int(
+            "max_pcap_flows",
+            toml_data.get(
+                "max_pcap_flows"
+            ),
+            path,
+            100000,
         ),
         ollama_url=_resolve_str(
             "ollama_url",

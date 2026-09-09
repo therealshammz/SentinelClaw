@@ -8,9 +8,13 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
+from sentinelclaw.config.settings import get_settings
+
 logger = logging.getLogger(
     __name__
 )
+
+ENTROPY_CHUNK_SIZE = 1024 * 1024
 
 
 def calculate_sha256(path: Path) -> str:
@@ -24,8 +28,14 @@ def calculate_sha256(path: Path) -> str:
 
 
 def calculate_entropy(path: Path) -> float:
+    byte_counts: Counter[int] = Counter()
+    length = 0
+
     try:
-        data = path.read_bytes()
+        with path.open("rb") as file:
+            while chunk := file.read(ENTROPY_CHUNK_SIZE):
+                byte_counts.update(chunk)
+                length += len(chunk)
     except OSError as exc:
         logger.warning(
             "Unable to read %s for entropy "
@@ -36,11 +46,8 @@ def calculate_entropy(path: Path) -> float:
 
         return 0.0
 
-    if not data:
+    if length == 0:
         return 0.0
-
-    byte_counts = Counter(data)
-    length = len(data)
 
     entropy = 0.0
 
@@ -148,6 +155,8 @@ def analyze_file(file_path: str) -> dict:
 
     pe_file = is_pe_file(path)
 
+    max_size = get_settings().max_file_analysis_size
+
     result = {
         "path": str(path.resolve()),
         "name": path.name,
@@ -158,11 +167,26 @@ def analyze_file(file_path: str) -> dict:
             3,
         ),
         "mime_type": mime_type,
-        "sha256": calculate_sha256(path),
-        "entropy": calculate_entropy(path),
+        "sha256": None,
+        "entropy": None,
         "is_pe_file": pe_file,
         "authenticode": None,
     }
+
+    if stat.st_size > max_size:
+        result["skipped"] = True
+        result["skipped_reason"] = "too large"
+
+        logger.info(
+            "Skipping full analysis of %s "
+            "(%d bytes exceeds %d byte limit)",
+            path.name,
+            stat.st_size,
+            max_size,
+        )
+    else:
+        result["sha256"] = calculate_sha256(path)
+        result["entropy"] = calculate_entropy(path)
 
     if os.name == "nt" and pe_file:
         result["authenticode"] = get_authenticode_status(path)

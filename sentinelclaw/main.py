@@ -15,7 +15,10 @@ from sentinelclaw.config.logging import configure_logging
 from sentinelclaw.config.settings import get_settings
 
 from sentinelclaw.detectors.file_detector import analyze_file_findings
-from sentinelclaw.detectors.log_detector import analyze_windows_events
+from sentinelclaw.detectors.log_detector import (
+    analyze_log_events,
+    analyze_windows_events,
+)
 from sentinelclaw.detectors.network_detector import analyze_network
 from sentinelclaw.detectors.pcap_detector import analyze_pcap_findings
 from sentinelclaw.detectors.process_detector import analyze_processes
@@ -43,6 +46,7 @@ from sentinelclaw.ui.console import (
     print_dashboard,
     print_file_dashboard,
     print_incidents_dashboard,
+    print_log_dashboard,
     print_pcap_dashboard,
 )
 
@@ -191,6 +195,7 @@ def calculate_overall_risk(
 
 def run_scan(
     show_progress: bool = False,
+    include_raw: bool = False,
 ) -> dict:
     progress = ScanProgress(
         enabled=show_progress,
@@ -379,7 +384,7 @@ def run_scan(
 
     progress.complete()
 
-    return {
+    result = {
         "scan": {
             "application": "SentinelClaw",
             "timestamp": scan_timestamp,
@@ -425,10 +430,14 @@ def run_scan(
         "timeline": timeline,
         "collector_status": collector_status,
         "system": system_info,
-        "processes": processes,
-        "network": network,
-        "windows_events": windows_events,
     }
+
+    if include_raw:
+        result["processes"] = processes
+        result["network"] = network
+        result["windows_events"] = windows_events
+
+    return result
 
 
 def run_file_scan(
@@ -633,6 +642,106 @@ def run_pcap_scan(
         "incidents": incidents,
         "timeline": timeline,
     }
+
+def run_log_scan(
+    file_path: str,
+) -> dict:
+    path = Path(
+        file_path
+    )
+
+    if not path.exists():
+        return {
+            "error": (
+                f"Log file does not exist: "
+                f"{path}"
+            )
+        }
+
+    if not path.is_file():
+        return {
+            "error": (
+                f"Log path is not a file: "
+                f"{path}"
+            )
+        }
+
+    try:
+        log_data = analyze_log_file(
+            str(path)
+        )
+    except PermissionError:
+        return {
+            "error": (
+                "Permission denied while "
+                f"reading log: {path}"
+            )
+        }
+    except Exception as exc:
+        return {
+            "error": (
+                f"Unable to analyze log file: "
+                f"{exc}"
+            )
+        }
+
+    if "error" in log_data:
+        return log_data
+
+    try:
+        findings = process_findings(
+            add_source(
+                analyze_log_events(
+                    log_data.get(
+                        "events",
+                        [],
+                    )
+                ),
+                "builtin",
+            )
+        )
+
+        incidents = correlate_findings(
+            findings
+        )
+
+        scan_timestamp = (
+            datetime.now()
+            .astimezone()
+            .isoformat()
+        )
+
+        timeline = build_timeline(
+            findings=findings,
+            incidents=incidents,
+            scan_timestamp=scan_timestamp,
+        )
+
+        risk = calculate_overall_risk(
+            findings,
+            incidents,
+        )
+    except Exception as exc:
+        return {
+            "error": (
+                "Log detection pipeline failed: "
+                f"{exc}"
+            )
+        }
+
+    return {
+        "analysis": {
+            "application": "SentinelClaw",
+            "timestamp": scan_timestamp,
+            "type": "log",
+        },
+        "risk": risk,
+        "log": log_data,
+        "findings": findings,
+        "incidents": incidents,
+        "timeline": timeline,
+    }
+
 
 def print_timeline(
     timeline: list[dict],
@@ -966,29 +1075,22 @@ def execute_command(
         )
 
     elif args.command == "logs":
-        path = Path(
+        report = run_log_scan(
             args.file
         )
 
-        if not path.exists():
-            print_cli_error(
-                f"Log file does not exist: {path}"
+        if args.json:
+            print_json(
+                report
+            )
+        else:
+            print_log_dashboard(
+                report,
+                verbose=args.verbose,
             )
 
+        if "error" in report:
             raise SystemExit(1)
-
-        if not path.is_file():
-            print_cli_error(
-                f"Log path is not a file: {path}"
-            )
-
-            raise SystemExit(1)
-
-        print_json(
-            analyze_log_file(
-                str(path)
-            )
-        )
 
     elif args.command == "file":
         report = run_file_scan(
@@ -1028,7 +1130,8 @@ def execute_command(
 
     elif args.command == "scan":
         report = run_scan(
-            show_progress=False
+            show_progress=False,
+            include_raw=args.json_raw,
         )
 
         print_json(
@@ -1050,7 +1153,8 @@ def execute_command(
 
     elif args.command == "report":
         report = run_scan(
-            show_progress=True
+            show_progress=True,
+            include_raw=args.json_raw,
         )
 
         created_files = save_requested_report_formats(
@@ -1165,11 +1269,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    subparsers.add_parser(
+    scan_parser = subparsers.add_parser(
         "scan",
         help=(
             "Run complete scan and print "
             "machine-readable JSON"
+        ),
+    )
+
+    scan_parser.add_argument(
+        "--json-raw",
+        action="store_true",
+        help=(
+            "Embed raw collector dumps "
+            "(processes, network, windows events) "
+            "in the JSON output"
         ),
     )
 
@@ -1230,6 +1344,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Report format to generate "
             "(default: all)"
+        ),
+    )
+
+    report_parser.add_argument(
+        "--json-raw",
+        action="store_true",
+        help=(
+            "Embed raw collector dumps in the "
+            "JSON report"
         ),
     )
 
@@ -1296,6 +1419,23 @@ def build_parser() -> argparse.ArgumentParser:
     logs_parser.add_argument(
         "file",
         help="Path to the log file",
+    )
+
+    logs_parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Print complete log analysis "
+            "as JSON"
+        ),
+    )
+
+    logs_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Show detailed log findings"
+        ),
     )
 
     file_parser = (
