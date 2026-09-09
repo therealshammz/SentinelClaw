@@ -658,3 +658,259 @@ def test_load_rule_file_validates_individual_rules(
         for rule in rules
     } == {"GOOD-FIELD-001"}
 
+
+def test_validate_rule_accepts_optional_metadata() -> None:
+    rule = single_condition_rule(
+        "META-001",
+        "name",
+        "equals",
+        "a",
+    )
+    rule.update(
+        {
+            "status": "experimental",
+            "noisy": True,
+            "falsepositives": "Legitimate admin automation.",
+            "level_override": "critical",
+            "enabled": True,
+        }
+    )
+
+    ok, reason = validate_rule(rule)
+
+    assert ok, reason
+
+
+def test_validate_rule_accepts_falsepositives_list() -> None:
+    rule = single_condition_rule(
+        "META-002",
+        "name",
+        "equals",
+        "a",
+    )
+    rule["falsepositives"] = [
+        "Automation",
+        "Admin scripts",
+    ]
+
+    ok, reason = validate_rule(rule)
+
+    assert ok, reason
+
+
+def test_validate_rule_rejects_unknown_status() -> None:
+    rule = single_condition_rule(
+        "META-003",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, status="madeup")
+    )
+
+    assert not ok
+    assert "invalid status" in reason
+
+
+def test_validate_rule_rejects_invalid_level_override() -> None:
+    rule = single_condition_rule(
+        "META-004",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, level_override="extreme")
+    )
+
+    assert not ok
+    assert "invalid level_override" in reason
+
+
+def test_validate_rule_rejects_invalid_noisy_type() -> None:
+    rule = single_condition_rule(
+        "META-005",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, noisy="yes")
+    )
+
+    assert not ok
+    assert "noisy must be a boolean" in reason
+
+
+def test_validate_rule_rejects_invalid_enabled_type() -> None:
+    rule = single_condition_rule(
+        "META-006",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, enabled="false")
+    )
+
+    assert not ok
+    assert "enabled must be a boolean" in reason
+
+
+def test_validate_rule_rejects_invalid_falsepositives() -> None:
+    rule = single_condition_rule(
+        "META-007",
+        "name",
+        "equals",
+        "a",
+    )
+
+    ok, reason = validate_rule(
+        dict(rule, falsepositives=[])
+    )
+
+    assert not ok
+    assert "falsepositives" in reason
+
+
+def test_unknown_status_rule_is_skipped_with_warning(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_file = tmp_path / "status.yaml"
+
+    rule_file.write_text(
+        "rules:\n"
+        "  - id: ST-001\n"
+        "    title: Bad status\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    status: madeup\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: a\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("WARNING"):
+        rules = load_rule_file(rule_file)
+
+    assert rules == []
+    assert "invalid status" in caplog.text
+
+
+def test_disabled_rule_skipped_at_load(
+    tmp_path,
+    caplog,
+) -> None:
+    rule_file = tmp_path / "disabled.yaml"
+
+    rule_file.write_text(
+        "rules:\n"
+        "  - id: DIS-001\n"
+        "    title: Disabled\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    enabled: false\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: a\n"
+        "  - id: EN-001\n"
+        "    title: Enabled\n"
+        "    description: x\n"
+        "    category: process\n"
+        "    severity: high\n"
+        "    confidence: high\n"
+        "    enabled: true\n"
+        "    conditions:\n"
+        "      - field: name\n"
+        "        operator: equals\n"
+        "        value: a\n",
+        encoding="utf-8",
+    )
+
+    with caplog.at_level("DEBUG"):
+        rules = load_rule_file(rule_file)
+
+    assert {
+        rule.get("id")
+        for rule in rules
+    } == {"EN-001"}
+    assert "Skipping disabled rule DIS-001" in caplog.text
+
+
+def test_level_override_changes_finding_severity() -> None:
+    rule = single_condition_rule(
+        "OVR-001",
+        "name",
+        "equals",
+        "malware.exe",
+    )
+    rule["severity"] = "medium"
+    rule["level_override"] = "critical"
+
+    findings = run_rules(
+        [rule],
+        [{"name": "malware.exe"}],
+        category="process",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "critical"
+
+
+def test_finding_severity_unchanged_without_override() -> None:
+    rule = single_condition_rule(
+        "OVR-002",
+        "name",
+        "equals",
+        "malware.exe",
+    )
+
+    findings = run_rules(
+        [rule],
+        [{"name": "malware.exe"}],
+        category="process",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "medium"
+
+
+def test_all_shipped_rules_carry_quality_metadata() -> None:
+    rules = load_rules_from_directory(
+        get_rules_directory()
+    )
+
+    statuses = set()
+
+    for rule in rules:
+        status = rule.get("status")
+
+        assert status in {
+            "proven",
+            "experimental",
+        }
+        assert isinstance(
+            rule.get("enabled", True),
+            bool,
+        )
+
+        statuses.add(status)
+
+    assert "proven" in statuses
+
+    if sys.platform.startswith("linux"):
+        assert "experimental" in statuses
+

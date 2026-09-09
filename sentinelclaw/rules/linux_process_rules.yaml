@@ -5,6 +5,9 @@ rules:
     category: process
     severity: high
     confidence: high
+    status: experimental
+    noisy: true
+    falsepositives: Software installers and bootstrap scripts that legitimately pipe curl or wget output into sh.
     enabled: true
     match: all
     os:
@@ -35,6 +38,7 @@ rules:
     category: process
     severity: high
     confidence: high
+    status: experimental
     enabled: true
     match: all
     os:
@@ -64,6 +68,7 @@ rules:
     category: process
     severity: medium
     confidence: medium
+    status: experimental
     enabled: true
     match: all
     os:
@@ -102,6 +107,7 @@ rules:
     category: process
     severity: medium
     confidence: low
+    status: experimental
     enabled: true
     match: all
     os:

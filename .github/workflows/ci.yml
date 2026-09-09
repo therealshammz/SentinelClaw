@@ -32,6 +32,11 @@ jobs:
         if: runner.os == 'Linux'
         run: python -m pip install -e ".[dev,pcap]"
 
+      - name: Rules sync check (P2-16)
+        # rules/ is the source of truth; fail CI if the packaged
+        # sentinelclaw/rules/ copy drifts from it.
+        run: python scripts/sync_rules.py --check
+
       - name: Lint (ruff)
         run: ruff check .
 

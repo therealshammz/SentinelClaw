@@ -49,6 +49,34 @@ VALID_RULE_OS_VALUES = frozenset(
     }
 )
 
+# P2-15: optional rule-quality metadata (Hayabusa-style). All of these
+# fields are OPTIONAL; a rule without any of them loads unchanged.
+#
+#   status          provenance of the rule: ``proven`` (battle-tested
+#                   detections), ``experimental`` (new, still being
+#                   tuned), ``stable`` (mature), or ``deprecated``
+#                   (kept for legacy reporting, no longer trusted).
+#   noisy           bool; signals the rule produces frequent, mostly
+#                   benign matches (used for reporting / tuning only).
+#   falsepositives  human-readable guidance on expected false
+#                   positives; a string or a list of strings.
+#   level_override  severity in VALID_SEVERITIES that overrides the
+#                   rule's ``severity`` at match time (per-rule tuning
+#                   without editing the base severity).
+#   enabled         bool, default true. Rules with ``enabled: false``
+#                   are skipped at load time with a debug log entry so
+#                   they neither fire nor appear in listings; the
+#                   ``run_rules`` guard is kept as defense in depth
+#                   for programmatically built rule lists.
+VALID_RULE_STATUSES = frozenset(
+    {
+        "proven",
+        "experimental",
+        "stable",
+        "deprecated",
+    }
+)
+
 REQUIRED_RULE_FIELDS = (
     "id",
     "title",
@@ -167,6 +195,18 @@ def load_rule_file(file_path: str | Path) -> list[dict]:
                 path,
                 rule.get("os"),
                 current_platform(),
+            )
+
+            continue
+
+        if not rule.get(
+            "enabled",
+            True,
+        ):
+            logger.debug(
+                "Skipping disabled rule %s in %s",
+                rule.get("id"),
+                path,
             )
 
             continue
@@ -724,6 +764,74 @@ def validate_rule(
                 f"{unknown_os}",
             )
 
+    if "status" in rule:
+        status = str(
+            rule.get("status", "")
+        ).lower()
+
+        if status not in VALID_RULE_STATUSES:
+            return (
+                False,
+                f"invalid status '{rule.get('status')}'",
+            )
+
+    if "noisy" in rule and not isinstance(
+        rule.get("noisy"),
+        bool,
+    ):
+        return (
+            False,
+            "noisy must be a boolean",
+        )
+
+    if "enabled" in rule and not isinstance(
+        rule.get("enabled"),
+        bool,
+    ):
+        return (
+            False,
+            "enabled must be a boolean",
+        )
+
+    if "level_override" in rule:
+        override = str(
+            rule.get("level_override", "")
+        ).lower()
+
+        if override not in VALID_SEVERITIES:
+            return (
+                False,
+                "invalid level_override "
+                f"'{rule.get('level_override')}'",
+            )
+
+    if "falsepositives" in rule:
+        false_positives = rule.get(
+            "falsepositives"
+        )
+
+        valid_falsepositives = isinstance(
+            false_positives,
+            str,
+        ) or (
+            isinstance(
+                false_positives,
+                list,
+            )
+            and bool(false_positives)
+            and all(
+                isinstance(item, str)
+                for item in false_positives
+            )
+        )
+
+        if not valid_falsepositives:
+            return (
+                False,
+                "falsepositives must be a string or a "
+                "non-empty list of strings",
+            )
+
     conditions = rule.get("conditions")
 
     if (
@@ -770,11 +878,21 @@ def create_finding(
     rule: dict,
     record: dict,
 ) -> dict:
+    severity = rule.get(
+        "severity",
+        "info",
+    )
+    level_override = rule.get(
+        "level_override"
+    )
+
+    if level_override:
+        severity = str(
+            level_override
+        ).lower()
+
     finding = {
-        "severity": rule.get(
-            "severity",
-            "info",
-        ),
+        "severity": severity,
         "rule_id": rule.get(
             "id",
             "RULE-UNKNOWN",

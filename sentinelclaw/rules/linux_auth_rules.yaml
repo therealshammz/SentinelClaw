@@ -5,6 +5,9 @@ rules:
     category: auth
     severity: medium
     confidence: medium
+    status: experimental
+    noisy: true
+    falsepositives: Legitimate users mistyping passwords and automation with stale credentials trigger repeated failure bursts.
     enabled: true
     match: all
     os:
@@ -33,6 +36,7 @@ rules:
     category: auth
     severity: high
     confidence: medium
+    status: experimental
     enabled: true
     match: all
     os:
@@ -60,6 +64,7 @@ rules:
     category: auth
     severity: medium
     confidence: medium
+    status: experimental
     enabled: true
     match: all
     os:

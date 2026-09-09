@@ -103,6 +103,109 @@ def get_rules() -> list[dict]:
         ) from exc
 
 
+def format_rule_line(
+    rule: dict,
+) -> str:
+    """Render one rule as ``ID | SEVERITY | CATEGORY | title [tags]``.
+
+    The severity column shows the effective severity at match time; a
+    rule-level ``level_override`` (P2-15) wins over the base severity.
+    Optional metadata is appended as bracketed tags so the base format
+    stays backward-compatible with parsers of the ``rules`` command.
+    """
+    effective_severity = (
+        rule.get(
+            "level_override"
+        )
+        or rule.get(
+            "severity",
+            "info",
+        )
+    )
+
+    line = (
+        f"{rule.get('id')} | "
+        f"{str(effective_severity).upper()} | "
+        f"{rule.get('category')} | "
+        f"{rule.get('title')}"
+    )
+
+    tags = []
+
+    status = rule.get("status")
+
+    if status:
+        tags.append(
+            f"status={str(status).lower()}"
+        )
+
+    if rule.get("noisy"):
+        tags.append("noisy")
+
+    level_override = rule.get(
+        "level_override"
+    )
+
+    if level_override:
+        tags.append(
+            f"level_override={str(level_override).lower()}"
+        )
+
+    if tags:
+        line += " " + " ".join(
+            f"[{tag}]"
+            for tag in tags
+        )
+
+    return line
+
+
+def rules_summary_lines(
+    rules: list[dict],
+) -> list[str]:
+    """Return deterministic count lines grouped by status and category."""
+    status_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+
+    for rule in rules:
+        status = str(
+            rule.get(
+                "status",
+                "unspecified",
+            )
+        ).lower()
+        category = str(
+            rule.get(
+                "category",
+                "unknown",
+            )
+        ).lower()
+
+        status_counts[status] = (
+            status_counts.get(status, 0) + 1
+        )
+        category_counts[category] = (
+            category_counts.get(category, 0) + 1
+        )
+
+    return [
+        "Rules by status: "
+        + " ".join(
+            f"{status}={count}"
+            for status, count in sorted(
+                status_counts.items()
+            )
+        ),
+        "Rules by category: "
+        + " ".join(
+            f"{category}={count}"
+            for category, count in sorted(
+                category_counts.items()
+            )
+        ),
+    ]
+
+
 def add_source(
     findings: list[dict],
     source: str,
@@ -1271,10 +1374,16 @@ def execute_command(
 
         for rule in rules:
             print(
-                f"{rule.get('id')} | "
-                f"{rule.get('severity', 'info').upper()} | "
-                f"{rule.get('category')} | "
-                f"{rule.get('title')}"
+                format_rule_line(rule)
+            )
+
+        print()
+
+        for summary_line in rules_summary_lines(
+            rules
+        ):
+            print(
+                summary_line
             )
 
     elif args.command == "incidents":

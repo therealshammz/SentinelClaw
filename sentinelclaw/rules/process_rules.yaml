@@ -5,6 +5,7 @@ rules:
     category: process
     severity: high
     confidence: high
+    status: proven
     enabled: true
     match: all
 
@@ -32,6 +33,9 @@ rules:
     category: process
     severity: high
     confidence: medium
+    status: proven
+    noisy: true
+    falsepositives: Admin scripts and tooling that legitimately use Invoke-WebRequest, DownloadString, WebClient or iwr to fetch content.
     enabled: true
     match: all
 
@@ -63,6 +67,7 @@ rules:
       - windows
     severity: high
     confidence: high
+    status: proven
     enabled: true
     match: all
 
@@ -94,6 +99,7 @@ rules:
       - windows
     severity: high
     confidence: high
+    status: proven
     enabled: true
     match: all
 
@@ -121,6 +127,7 @@ rules:
     category: process
     severity: low
     confidence: low
+    status: proven
     enabled: true
     match: any
 
