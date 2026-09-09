@@ -80,3 +80,77 @@ def test_encoded_powershell_synthetic_record_can_trigger_rule() -> None:
     }
 
     assert "PROC-YAML-001" in ids
+
+
+def test_yaml_process_finding_promotes_entity_context() -> None:
+    rules = load_rules_from_directory(
+        get_rules_directory()
+    )
+
+    record = {
+        "pid": 7777,
+        "ppid": 1000,
+        "name": "powershell.exe",
+        "parent_name": "cmd.exe",
+        "command_line": (
+            "powershell.exe -EncodedCommand VABFAFMAVA=="
+        ),
+        "create_time": "2026-09-08T10:00:00+00:00",
+    }
+
+    findings = run_rules(
+        rules,
+        [record],
+        category="process",
+    )
+
+    matching = [
+        finding
+        for finding in findings
+        if finding.get("rule_id") == "PROC-YAML-001"
+    ]
+
+    assert matching
+    assert matching[0]["pid"] == 7777
+    assert matching[0]["process_name"] == (
+        "powershell.exe"
+    )
+    assert matching[0]["evidence"]["pid"] == 7777
+    assert matching[0]["evidence"]["name"] == (
+        "powershell.exe"
+    )
+
+
+def test_yaml_file_finding_does_not_promote_process_name() -> None:
+    rules = load_rules_from_directory(
+        get_rules_directory()
+    )
+
+    record = {
+        "name": "suspicious.exe",
+        "path": (
+            "C:\\Users\\analyst\\Downloads\\"
+            "suspicious.exe"
+        ),
+        "is_pe_file": True,
+        "entropy": 7.9,
+        "extension": ".exe",
+    }
+
+    findings = run_rules(
+        rules,
+        [record],
+        category="file",
+    )
+
+    matching = [
+        finding
+        for finding in findings
+        if finding.get("rule_id") == "FILE-YAML-001"
+    ]
+
+    assert matching
+    assert "process_name" not in matching[0]
+    assert matching[0]["evidence"]["name"] == (
+        "suspicious.exe"
+    )

@@ -279,6 +279,15 @@ def evaluate_rule(
     return all(results)
 
 
+PROMOTED_CONTEXT_FIELDS = (
+    "pid",
+    "process_name",
+    "remote_ip",
+    "remote_port",
+    "timestamp",
+)
+
+
 def create_finding(
     rule: dict,
     record: dict,
@@ -306,6 +315,23 @@ def create_finding(
         ),
         "evidence": record,
     }
+
+    # Promote entity context to the finding's top level so the
+    # correlation engine can group YAML-rule findings the same way
+    # it groups built-in detector findings. The full record stays
+    # unchanged under "evidence" for reports and timeline fallback.
+    for field in PROMOTED_CONTEXT_FIELDS:
+        if field in record:
+            finding[field] = record[field]
+
+    if (
+        "process_name" not in finding
+        and rule.get("category") == "process"
+    ):
+        name = record.get("name")
+
+        if name is not None:
+            finding["process_name"] = name
 
     mitre = rule.get("mitre")
 
