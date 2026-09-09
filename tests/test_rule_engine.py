@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from sentinelclaw.config.paths import get_rules_directory
@@ -81,7 +83,28 @@ def test_expected_rule_categories_exist() -> None:
 
     assert "process" in categories
     assert "file" in categories
-    assert "windows_event" in categories
+
+    on_windows = sys.platform.startswith(
+        "win"
+    )
+
+    on_linux = sys.platform.startswith(
+        "linux"
+    )
+
+    # windows_event rules are OS-gated to Windows (P1-10).
+    if on_windows:
+        assert "windows_event" in categories
+    else:
+        assert "windows_event" not in categories
+
+    # auth and persistence categories exist only on Linux.
+    if on_linux:
+        assert "auth" in categories
+        assert "persistence" in categories
+    else:
+        assert "auth" not in categories
+        assert "persistence" not in categories
 
 
 def test_encoded_powershell_synthetic_record_can_trigger_rule() -> None:
@@ -542,7 +565,17 @@ def test_all_shipped_rules_load_and_validate() -> None:
         get_rules_directory()
     )
 
-    assert len(rules) == 13
+    # The shipped rule set is OS-gated (P1-10): Linux loads the base
+    # rules plus the Linux-only process/auth/persistence rules, while
+    # other platforms load only the platform-agnostic rules.
+    if sys.platform.startswith(
+        "linux"
+    ):
+        expected = 19
+    else:
+        expected = 7
+
+    assert len(rules) == expected
 
 
 def test_all_rule_files_failing_raises(tmp_path) -> None:

@@ -1,0 +1,76 @@
+rules:
+  - id: AUTH-YAML-001
+    title: Failed SSH authentication for privileged account
+    description: SSH password authentication failed for a privileged account.
+    category: auth
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Credential Access
+      technique: T1110
+      name: Brute Force
+
+    conditions:
+      - field: event_type
+        operator: equals
+        value: failed_password
+
+      - field: username
+        operator: equals
+        value:
+          - root
+          - admin
+          - administrator
+
+  - id: AUTH-YAML-002
+    title: Privileged SSH login accepted
+    description: SSH accepted a login for the root account.
+    category: auth
+    severity: high
+    confidence: medium
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1078
+      name: Valid Accounts
+
+    conditions:
+      - field: event_type
+        operator: equals
+        value:
+          - accepted_password
+          - accepted_publickey
+
+      - field: username
+        operator: equals
+        value: root
+
+  - id: AUTH-YAML-003
+    title: New local user account created
+    description: A new local user account was created on the system.
+    category: auth
+    severity: medium
+    confidence: medium
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1136.001
+      name: Local Account
+
+    conditions:
+      - field: event_type
+        operator: equals
+        value: new_user

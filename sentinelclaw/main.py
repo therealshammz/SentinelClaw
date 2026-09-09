@@ -14,6 +14,7 @@ from sentinelclaw.config.logging import configure_logging
 
 from sentinelclaw.config.settings import get_settings
 
+from sentinelclaw.detectors.auth_detector import analyze_auth_events
 from sentinelclaw.detectors.file_detector import analyze_file_findings
 from sentinelclaw.detectors.log_detector import (
     analyze_log_events,
@@ -21,6 +22,9 @@ from sentinelclaw.detectors.log_detector import (
 )
 from sentinelclaw.detectors.network_detector import analyze_network
 from sentinelclaw.detectors.pcap_detector import analyze_pcap_findings
+from sentinelclaw.detectors.persistence_detector import (
+    analyze_persistence_records,
+)
 from sentinelclaw.detectors.process_detector import analyze_processes
 
 from sentinelclaw.engine.correlation_engine import correlate_findings
@@ -35,9 +39,13 @@ from sentinelclaw.models.findings import calculate_risk_score
 
 from sentinelclaw.reporting.report_generator import save_report_formats
 
+from sentinelclaw.tools.auth_log_analyzer import get_auth_events
 from sentinelclaw.tools.file_analyzer import analyze_file
 from sentinelclaw.tools.log_analyzer import analyze_log_file
 from sentinelclaw.tools.network_analyzer import get_network_connections
+from sentinelclaw.tools.persistence_analyzer import (
+    get_persistence_records,
+)
 from sentinelclaw.tools.process_analyzer import get_processes
 from sentinelclaw.tools.system_info import get_system_info
 from sentinelclaw.tools.windows_event_analyzer import get_windows_events
@@ -279,6 +287,32 @@ def run_scan(
             "for Security log access."
         )
 
+    auth_events: list[dict] = []
+    persistence_records: list[dict] = []
+
+    if sys.platform.startswith(
+        "linux"
+    ):
+        try:
+            auth_events = get_auth_events()
+        except Exception as exc:
+            auth_events = []
+
+            logger.warning(
+                "Auth log collection failed: %s",
+                exc,
+            )
+
+        try:
+            persistence_records = get_persistence_records()
+        except Exception as exc:
+            persistence_records = []
+
+            logger.warning(
+                "Persistence collection failed: %s",
+                exc,
+            )
+
     progress.step(
         "Running detection rules..."
     )
@@ -306,6 +340,20 @@ def run_scan(
         "builtin",
     )
 
+    built_in_auth_findings = add_source(
+        analyze_auth_events(
+            auth_events
+        ),
+        "builtin",
+    )
+
+    built_in_persistence_findings = add_source(
+        analyze_persistence_records(
+            persistence_records
+        ),
+        "builtin",
+    )
+
     yaml_process_findings = add_source(
         run_rules(
             rules,
@@ -324,6 +372,24 @@ def run_scan(
         "yaml",
     )
 
+    yaml_auth_findings = add_source(
+        run_rules(
+            rules,
+            auth_events,
+            category="auth",
+        ),
+        "yaml",
+    )
+
+    yaml_persistence_findings = add_source(
+        run_rules(
+            rules,
+            persistence_records,
+            category="persistence",
+        ),
+        "yaml",
+    )
+
     process_results = process_findings(
         built_in_process_findings
         + yaml_process_findings
@@ -338,10 +404,22 @@ def run_scan(
         + yaml_windows_findings
     )
 
+    auth_results = process_findings(
+        built_in_auth_findings
+        + yaml_auth_findings
+    )
+
+    persistence_results = process_findings(
+        built_in_persistence_findings
+        + yaml_persistence_findings
+    )
+
     all_findings = process_findings(
         process_results
         + network_results
         + windows_results
+        + auth_results
+        + persistence_results
     )
 
     progress.step(
@@ -401,6 +479,12 @@ def run_scan(
             "windows_events_scanned": len(
                 windows_events
             ),
+            "auth_events_scanned": len(
+                auth_events
+            ),
+            "persistence_records_scanned": len(
+                persistence_records
+            ),
             "process_findings": len(
                 process_results
             ),
@@ -409,6 +493,12 @@ def run_scan(
             ),
             "windows_findings": len(
                 windows_results
+            ),
+            "auth_findings": len(
+                auth_results
+            ),
+            "persistence_findings": len(
+                persistence_results
             ),
             "total_findings": len(
                 all_findings
@@ -424,6 +514,8 @@ def run_scan(
             "processes": process_results,
             "network": network_results,
             "windows_events": windows_results,
+            "auth": auth_results,
+            "persistence": persistence_results,
             "all": all_findings,
         },
         "incidents": incidents,

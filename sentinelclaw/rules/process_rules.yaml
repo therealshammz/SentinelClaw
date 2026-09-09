@@ -59,6 +59,8 @@ rules:
     title: Office application spawned PowerShell
     description: An Office process spawned a PowerShell interpreter.
     category: process
+    os:
+      - windows
     severity: high
     confidence: high
     enabled: true
@@ -88,6 +90,8 @@ rules:
     title: MSHTA remote execution
     description: MSHTA appears to be loading remote content.
     category: process
+    os:
+      - windows
     severity: high
     confidence: high
     enabled: true

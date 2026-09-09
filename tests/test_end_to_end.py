@@ -12,8 +12,11 @@ These tests freeze the Phase 1 upgrade behavior end to end:
   incidents carry first_seen/last_seen bounds.
 * P1-9: a malformed rule file is isolated at load time and a full scan
   still completes with the remaining valid rules.
+* P1-10: Linux collectors (auth logs, persistence) are stubbed like the
+  other collectors so the canned fixtures stay deterministic on any host.
 """
 
+import sys
 from datetime import datetime, timezone
 
 from sentinelclaw.config.settings import get_settings
@@ -69,6 +72,16 @@ def run_canned_scan(
     monkeypatch.setattr(
         "sentinelclaw.main.get_windows_events",
         lambda **kwargs: windows_events,
+    )
+
+    monkeypatch.setattr(
+        "sentinelclaw.main.get_auth_events",
+        lambda: [],
+    )
+
+    monkeypatch.setattr(
+        "sentinelclaw.main.get_persistence_records",
+        lambda: [],
     )
 
     monkeypatch.setattr(
@@ -203,7 +216,15 @@ def test_scan_produces_known_findings_without_duplicates_and_orders_timeline(
     rule_ids = all_rule_ids(report)
 
     assert "PROC-YAML-001" in rule_ids
-    assert "PROC-YAML-003" in rule_ids
+
+    # PROC-YAML-003 (office spawn) is OS-gated to Windows (P1-10) and
+    # therefore only loads and fires on Windows hosts.
+    if sys.platform.startswith(
+        "win"
+    ):
+        assert "PROC-YAML-003" in rule_ids
+    else:
+        assert "PROC-YAML-003" not in rule_ids
 
     assert "WIN-001" not in rule_ids
     assert "LOG-001" not in rule_ids

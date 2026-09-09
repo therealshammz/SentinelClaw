@@ -1,12 +1,58 @@
 import json
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
 
 import psutil
 
 logger = logging.getLogger(
     __name__
 )
+
+
+def probe_deleted_executable(
+    pid: int,
+    executable: str | None,
+) -> bool:
+    """Return whether a running process's binary was unlinked from disk.
+
+    On POSIX systems this resolves ``/proc/<pid>/exe``; a missing or
+    ``(deleted)``-suffixed link indicates the executable was removed while
+    still running (a common evasion technique). On non-POSIX platforms or
+    when ``/proc`` is unavailable the check returns ``False``.
+    """
+    if os.name != "posix":
+        return False
+
+    if not pid:
+        return False
+
+    if not Path(
+        "/proc"
+    ).is_dir():
+        return False
+
+    if (
+        executable
+        and executable.endswith(
+            " (deleted)"
+        )
+    ):
+        return True
+
+    try:
+        target = os.readlink(
+            f"/proc/{pid}/exe"
+        )
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+    return target.endswith(
+        " (deleted)"
+    )
 
 
 def safe_parent_name(process: psutil.Process) -> str | None:
@@ -84,6 +130,10 @@ def get_processes() -> list[dict]:
                     "parent_name": safe_parent_name(process),
                     "username": info.get("username"),
                     "executable": info.get("exe"),
+                    "exe_deleted": probe_deleted_executable(
+                        info.get("pid") or 0,
+                        info.get("exe"),
+                    ),
                     "status": info.get("status"),
                     "memory_percent": round(
                         info.get("memory_percent") or 0,

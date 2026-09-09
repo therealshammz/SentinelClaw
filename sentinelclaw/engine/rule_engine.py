@@ -1,5 +1,6 @@
 import logging
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,16 @@ VALID_RULE_CATEGORIES = frozenset(
         "file",
         "windows_event",
         "log",
+        "auth",
+        "persistence",
+    }
+)
+
+VALID_RULE_OS_VALUES = frozenset(
+    {
+        "linux",
+        "windows",
+        "all",
     }
 )
 
@@ -47,6 +58,54 @@ REQUIRED_RULE_FIELDS = (
     "confidence",
     "conditions",
 )
+
+
+def current_platform() -> str:
+    """Return the normalized current platform: ``linux`` or ``windows``."""
+    if sys.platform.startswith(
+        "win"
+    ):
+        return "windows"
+
+    if sys.platform.startswith(
+        "linux"
+    ):
+        return "linux"
+
+    return "other"
+
+
+def rule_matches_current_os(
+    rule: dict,
+) -> bool:
+    """Return whether a rule's optional ``os`` list includes the platform.
+
+    A rule without an ``os`` field (or with ``all`` listed) applies on
+    every platform. Rules whose ``os`` list excludes the current platform
+    are skipped at load time so that, for example, Windows-only rules do
+    not fire noise on Linux hosts.
+    """
+    os_values = rule.get("os")
+
+    if not os_values:
+        return True
+
+    if not isinstance(
+        os_values,
+        list,
+    ):
+        return True
+
+    normalized = {
+        str(value)
+        .lower()
+        for value in os_values
+    }
+
+    if "all" in normalized:
+        return True
+
+    return current_platform() in normalized
 
 
 def load_rule_file(file_path: str | Path) -> list[dict]:
@@ -94,6 +153,20 @@ def load_rule_file(file_path: str | Path) -> list[dict]:
                 index,
                 path,
                 reason,
+            )
+
+            continue
+
+        if not rule_matches_current_os(
+            rule
+        ):
+            logger.debug(
+                "Skipping rule %s in %s: "
+                "os %r excludes platform %r",
+                rule.get("id"),
+                path,
+                rule.get("os"),
+                current_platform(),
             )
 
             continue
@@ -620,6 +693,36 @@ def validate_rule(
             False,
             f"invalid category '{rule.get('category')}'",
         )
+
+    if "os" in rule:
+        os_values = rule.get("os")
+
+        if not isinstance(
+            os_values,
+            list,
+        ) or not os_values:
+            return (
+                False,
+                "os must be a non-empty list",
+            )
+
+        normalized_os = {
+            str(value)
+            .lower()
+            for value in os_values
+        }
+
+        unknown_os = sorted(
+            normalized_os
+            - VALID_RULE_OS_VALUES
+        )
+
+        if unknown_os:
+            return (
+                False,
+                "invalid os value(s) "
+                f"{unknown_os}",
+            )
 
     conditions = rule.get("conditions")
 
