@@ -19,32 +19,47 @@ python -m pip install -e ".[dev]"
 
 ### Common Commands
 
-- **Run complete scan (JSON output)**: `sentinelclaw scan`
-- **Run scan with dashboard**: `sentinelclaw dashboard` or `sentinelclaw summary`
-- **Run scan with AI investigation**: `sentinelclaw investigate` (requires Ollama with Qwen model)
-- **Generate reports**: `sentinelclaw report` (generates JSON, text, and HTML formats)
+- **Run complete scan (JSON output)**: `sentinelclaw scan` (`--format json|jsonl`, `--json-raw`, `--since <ISO>`, `--last`)
+- **Run scan with dashboard**: `sentinelclaw dashboard` or `sentinelclaw summary` (both `--verbose`)
+- **Loop scans / watch for deltas**: `sentinelclaw watch` (`--interval N`, `--count N`)
+- **Run scan with AI investigation**: `sentinelclaw investigate` (`--model <name>`; requires Ollama with Qwen model)
+- **Generate reports**: `sentinelclaw report` (`--format json|text|html|csv|jsonl|all`, default `all` = json+text+html; `--json-raw`)
 - **Show system information**: `sentinelclaw system`
 - **Show running processes**: `sentinelclaw processes`
 - **Show network connections**: `sentinelclaw network`
 - **Show Windows Security Events**: `sentinelclaw windows-events` (Windows only, requires admin privileges)
-- **Analyze a file**: `sentinelclaw file <path>`
-- **Analyze a PCAP file**: `sentinelclaw pcap <path>` (requires PCAP extra)
-- **Analyze a log file**: `sentinelclaw logs <path>`
+- **Analyze an offline EVTX file**: `sentinelclaw evtx <path>` (`--json`, `--verbose`; requires `evtx` extra)
+- **Analyze a file or directory**: `sentinelclaw file <path>` (`--json`, `--verbose`)
+- **Analyze a PCAP file**: `sentinelclaw pcap <path>` (`--json`, `--verbose`; requires `pcap` extra)
+- **Analyze a log file**: `sentinelclaw logs <path>` (`--json`, `--verbose`)
 - **Show detection rules**: `sentinelclaw rules`
-- **Show correlated incidents**: `sentinelclaw incidents`
+- **Import SigmaHQ rules**: `sentinelclaw rules import` (`--source`, `--release`, `--dest`)
+- **Show correlated incidents**: `sentinelclaw incidents` (`--verbose`)
 - **Show investigation timeline**: `sentinelclaw timeline`
+- **Scan-state hunting**: `sentinelclaw history`, `diff` (`[id1 id2]` or `--last`), `search <keyword>` (`--state <id>`), `accounts`, `tree <incident_id>`, `stats`
+- **Plugin demo**: `sentinelclaw sample-plugin`
+- **Global flag**: `--debug` (show Python tracebacks)
 
 ### Development Commands
 
 - **Run test suite**: `pytest`
 - **Run tests with verbose output**: `pytest -v`
 - **Run a specific test**: `pytest tests/test_cli.py::test_function_name`
+- **Lint**: `ruff check .`
+- **Type check**: `mypy sentinelclaw`
+- **Rules sync check**: `python scripts/sync_rules.py --check`
+- **Bump version**: `python scripts/bump_version.py --patch|--minor|--major [target]`
+- **Build standalone binary**: `scripts/build_binary.sh` (Linux/macOS) or `.\scripts\build_binary.ps1` (Windows); requires the `[build]` extra
 
 ## Architecture
 
 SentinelClaw follows a modular, layered architecture designed for defensive cybersecurity analysis:
 
 ### Core Layers (Deterministic Engine)
+
+0. **Command Layer** (`sentinelclaw/commands/`)
+   - Thin CLI command modules registered in `sentinelclaw/commands/__init__.py` (source of truth for the command inventory); `main.py` only builds the parser and dispatches
+   - `_scan_core.py` hosts the scan pipeline shared by `scan`/`dashboard`/`summary`/`incidents`/`timeline`/`report`
 
 1. **Collectors / Tools** (`sentinelclaw/tools/`)
    - Collect raw system data: processes, network connections, Windows events, system info
@@ -95,24 +110,49 @@ SentinelClaw follows a modular, layered architecture designed for defensive cybe
   - Does not replace detection engine; AI output is advisory only
   - Requires separate Ollama installation and Qwen model download
 
+### Scan-State Store & Hunting
+
+- **State store** (`sentinelclaw/state/store.py`)
+  - Appends one bounded record per `scan`/`watch` cycle to `scans.jsonl`
+    under the resolved data directory (default `./data`)
+  - Backs the hunting commands (`history`, `diff`, `search`, `accounts`,
+    `tree`, `stats`)
+
+### Sigma & Plugins
+
+- **Sigma importer** (`sentinelclaw/sigma/`) converts SigmaHQ rules into
+  the internal format (`rules import`); writes a `sigma/` tree into the
+  rule directories
+- **Plugin API** (`sentinelclaw/plugins/`) discovers third-party
+  subcommands via the `sentinelclaw.detectors` entry-point group;
+  `sample-plugin` is the built-in demo
+
 ### Project Structure
 
 ```
 SentinelClaw/
 ├── sentinelclaw/                 # Main Python package
 │   ├── __init__.py
-│   ├── main.py                   # CLI entry point
+│   ├── main.py                   # CLI entry point (thin; parser + dispatch)
+│   ├── __main__.py               # `python -m sentinelclaw` entry
 │   ├── ai/                       # Optional AI analysis (Ollama/Qwen)
+│   ├── commands/                 # CLI command modules (command inventory source of truth)
 │   ├── config/                   # Configuration and path management
 │   ├── detectors/                # Detection logic for each data type
 │   ├── engine/                   # Core processing engines (correlation, timeline, etc.)
 │   ├── models/                   # Data models and risk scoring
+│   ├── plugins/                  # Entry-point plugin discovery + sample plugin
 │   ├── reporting/                # Report generation
+│   ├── rules/                    # Packaged rule trees (yaml, sigma, yara)
+│   ├── sigma/                    # SigmaHQ importer/reader
+│   ├── state/                    # Scan-state store + hunting commands
 │   ├── tools/                    # Data collection and analysis utilities
 │   └── ui/                       # Console output formatting
-├── rules/                        # YAML detection rules
+├── rules/                        # Detection-rule source of truth (synced to package)
+├── packaging/                    # PyInstaller spec + packaging docs
+├── scripts/                      # sync_rules, bump_version, build_binary
 ├── tests/                        # Automated test suite
-├── data/                         # Sample data (PCAP files, etc.)
+├── data/                         # Scan-state store and sample data
 ├── reports/                      # Generated reports directory
 ├── openclaw/                     # OpenClaw skill definition
 ├── pyproject.toml                # Project configuration and dependencies
@@ -137,3 +177,7 @@ SentinelClaw/
 - Detection rules are YAML files in the `rules/` directory
 - The package is installed in development mode using `pip install -e .`
 - Platform-specific dependencies are handled via environment markers in `pyproject.toml`
+- The `[build]` extra installs PyInstaller for `packaging/sentinelclaw.spec` builds; see `packaging/README.md`
+- Rules in `rules/` are the source of truth; `scripts/sync_rules.py` mirrors them into `sentinelclaw/rules/`
+- Versions live only in `pyproject.toml`; use `scripts/bump_version.py` to change them
+- i18n is deferred: all UI strings in `sentinelclaw/ui/console.py` are English-only

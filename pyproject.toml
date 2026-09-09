@@ -39,6 +39,12 @@ dev = [
     "pytest-cov>=5.0.0",
 ]
 
+# Build-time tooling for standalone binaries (P6-29). PyInstaller is not
+# a runtime dependency; only the packaging scripts / CI build job need it.
+build = [
+    "pyinstaller>=6.0.0",
+]
+
 [project.scripts]
 sentinelclaw = "sentinelclaw.main:main"
 
@@ -52,6 +58,7 @@ include = ["sentinelclaw*"]
 [tool.setuptools.package-data]
 sentinelclaw = [
     "rules/*.yaml",
+    "rules/sigma/*.yaml",
     "rules/yara/*",
 ]
 
