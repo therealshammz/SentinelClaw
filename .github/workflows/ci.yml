@@ -39,4 +39,5 @@ jobs:
         run: mypy sentinelclaw
 
       - name: Test with coverage
-        run: pytest --cov=sentinelclaw --cov-report=term-missing -q
+        # P0-6 floor gate; raise toward 70% as Phase 1 adds detector tests
+        run: pytest --cov=sentinelclaw --cov-report=term-missing -q --cov-fail-under=30
