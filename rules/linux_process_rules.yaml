@@ -1,0 +1,136 @@
+rules:
+  - id: LINPROC-YAML-001
+    title: Unix shell download-and-execute
+    description: A shell command downloads content and pipes it into an interpreter.
+    category: process
+    severity: high
+    confidence: high
+    status: experimental
+    noisy: true
+    falsepositives: Software installers and bootstrap scripts that legitimately pipe curl or wget output into sh.
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Execution
+      technique: T1059.004
+      name: Unix Shell
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - bash
+          - sh
+          - dash
+          - zsh
+          - ksh
+
+      - field: command_line
+        operator: matches
+        value: "(curl|wget)\\s+\\S+.*\\|\\s*(ba|d|k|z)?sh\\b"
+
+  - id: LINPROC-YAML-002
+    title: Network tool with shell-execution arguments
+    description: A network tool is running with arguments that can hand out a shell.
+    category: process
+    severity: high
+    confidence: high
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Execution
+      technique: T1059.004
+      name: Unix Shell
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - nc
+          - ncat
+          - netcat
+          - socat
+
+      - field: command_line
+        operator: matches
+        value: "(\\s-[ec]\\b|--exec|--sh-exec|/bin/(ba|d)?sh\\b)"
+
+  - id: LINPROC-YAML-003
+    title: Interpreter running encoded or obfuscated command
+    description: An interpreter is running an inline command with encoded content.
+    category: process
+    severity: medium
+    confidence: medium
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Defense Evasion
+      technique: T1027
+      name: Obfuscated Files or Information
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - python
+          - python2
+          - python3
+          - perl
+          - ruby
+          - php
+          - node
+
+      - field: command_line
+        operator: contains
+        value:
+          - "-c "
+          - "-e "
+
+      - field: command_line
+        operator: matches
+        value: "base64|exec\\(|eval\\(|chr\\(|\\\\x"
+
+  - id: LINPROC-YAML-004
+    title: Shell script executing from writable path
+    description: A shell process is executing from a user-writable directory.
+    category: process
+    severity: medium
+    confidence: low
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Execution
+      technique: T1204
+      name: User Execution
+
+    conditions:
+      - field: name
+        operator: equals
+        value:
+          - bash
+          - sh
+          - dash
+          - zsh
+          - ash
+
+      - field: executable
+        operator: contains
+        value:
+          - "/tmp/"
+          - "/var/tmp/"
+          - "/dev/shm/"

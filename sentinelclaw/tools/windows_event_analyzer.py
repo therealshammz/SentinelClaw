@@ -1,8 +1,19 @@
 import argparse
 import json
+import logging
 from datetime import timezone
 
-import win32evtlog
+logger = logging.getLogger(
+    __name__
+)
+
+# Conditionally import win32evtlog to avoid ImportError on non-Windows systems
+try:
+    import win32evtlog
+    HAS_WIN32EVTLOG = True
+except ImportError:
+    win32evtlog = None
+    HAS_WIN32EVTLOG = False
 
 
 DEFAULT_EVENT_IDS = {
@@ -27,7 +38,12 @@ def safe_format_message(event) -> str:
     try:
         inserts = event.StringInserts or []
         return " | ".join(str(item) for item in inserts)
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            "Unable to format Windows event message: %s",
+            exc,
+        )
+
         return ""
 
 
@@ -36,10 +52,19 @@ def get_windows_events(
     max_events: int = 200,
     event_ids: set[int] | None = None,
 ) -> list[dict]:
+    if not HAS_WIN32EVTLOG:
+        # Return empty list on non-Windows systems where win32evtlog is not available
+        logger.debug(
+            "win32evtlog unavailable; "
+            "returning no Windows events"
+        )
+
+        return []
+
     if event_ids is None:
         event_ids = set(DEFAULT_EVENT_IDS.keys())
 
-    events = []
+    events: list[dict] = []
 
     handle = win32evtlog.OpenEventLog(None, log_name)
 
@@ -98,6 +123,13 @@ def get_windows_events(
 
     finally:
         win32evtlog.CloseEventLog(handle)
+
+    logger.debug(
+        "Collected %d Windows event(s) "
+        "from log %s",
+        len(events),
+        log_name,
+    )
 
     return events
 

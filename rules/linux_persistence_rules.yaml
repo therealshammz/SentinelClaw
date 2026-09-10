@@ -1,0 +1,135 @@
+rules:
+  - id: LINPERS-YAML-001
+    title: Cron job references temporary directory
+    description: A cron job executes or references a temporary directory.
+    category: persistence
+    severity: medium
+    confidence: medium
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1053.003
+      name: Cron
+
+    conditions:
+      - field: mechanism
+        operator: equals
+        value: cron
+
+      - field: command
+        operator: contains
+        value:
+          - "/tmp/"
+          - "/var/tmp/"
+
+  - id: LINPERS-YAML-002
+    title: Cron job downloads and executes content
+    description: A cron entry pipes downloaded content into a shell interpreter.
+    category: persistence
+    severity: high
+    confidence: high
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1053.003
+      name: Cron
+
+    conditions:
+      - field: mechanism
+        operator: equals
+        value: cron
+
+      - field: command
+        operator: matches
+        value: "(curl|wget|nc)\\s+\\S+.*\\|\\s*(ba|d|k|z)?sh\\b"
+
+  - id: LINPERS-YAML-003
+    title: Systemd unit file writable by others
+    description: A systemd unit file is writable by group or other users.
+    category: persistence
+    severity: medium
+    confidence: high
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1543.002
+      name: Systemd Service
+
+    conditions:
+      - field: mechanism
+        operator: equals
+        value: systemd_unit
+
+      - field: writable_by_others
+        operator: equals
+        value: true
+
+  - id: LINPERS-YAML-004
+    title: Systemd service executes from temporary path
+    description: A systemd unit executes a binary from a temporary location.
+    category: persistence
+    severity: medium
+    confidence: medium
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1543.002
+      name: Systemd Service
+
+    conditions:
+      - field: mechanism
+        operator: equals
+        value: systemd_unit
+
+      - field: exec_start
+        operator: contains
+        value:
+          - "/tmp/"
+          - "/var/tmp/"
+          - "/dev/shm/"
+
+  - id: LINPERS-YAML-005
+    title: Startup script in world-writable location
+    description: A boot or run-level script is in a world-writable location.
+    category: persistence
+    severity: medium
+    confidence: medium
+    status: experimental
+    enabled: true
+    match: all
+    os:
+      - linux
+
+    mitre:
+      tactic: Persistence
+      technique: T1037
+      name: Boot or Logon Autostart Execution
+
+    conditions:
+      - field: mechanism
+        operator: equals
+        value: rc_script
+
+      - field: world_writable
+        operator: equals
+        value: true

@@ -3,8 +3,11 @@ rules:
     title: Windows audit log cleared
     description: The Windows Security audit log was cleared.
     category: windows_event
+    os:
+      - windows
     severity: high
     confidence: high
+    status: proven
     enabled: true
     match: all
 
@@ -22,8 +25,11 @@ rules:
     title: Windows service installed
     description: Windows recorded installation of a new system service.
     category: windows_event
+    os:
+      - windows
     severity: medium
     confidence: medium
+    status: proven
     enabled: true
     match: all
 
@@ -41,8 +47,11 @@ rules:
     title: New Windows account created
     description: A new local or domain user account was created.
     category: windows_event
+    os:
+      - windows
     severity: medium
     confidence: medium
+    status: proven
     enabled: true
     match: all
 
@@ -60,8 +69,11 @@ rules:
     title: User added to local group
     description: A Windows user was added to a local security group.
     category: windows_event
+    os:
+      - windows
     severity: medium
     confidence: medium
+    status: proven
     enabled: true
     match: all
 

@@ -1,25 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from typing import Any
 
+from sentinelclaw.config.constants import (
+    SEVERITY_RANK,
+    VALID_SEVERITIES,
+)
+from sentinelclaw.models.risk import finding_risk_breakdown
 
-VALID_SEVERITIES = {
-    "info",
-    "low",
-    "medium",
-    "high",
-    "critical",
-}
-
-SEVERITY_RANK = {
-    "info": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
-}
+logger = logging.getLogger(
+    __name__
+)
 
 
 def normalize_severity(value: Any) -> str:
@@ -350,14 +344,29 @@ def merge_findings(
             secondary["confidence"]
         )
 
+    # P3-20: keep rule provenance (source file + status metadata) when
+    # the merged survivor lacks it, so deduplicated findings still
+    # attribute detections to the rule file that produced them.
+    for field in (
+        "rule_source",
+        "rule_status",
+    ):
+        if (
+            not primary.get(field)
+            and secondary.get(field)
+        ):
+            primary[field] = (
+                secondary[field]
+            )
+
     return primary
 
 
 def deduplicate_findings(
     findings: list[dict],
 ) -> list[dict]:
-    exact_seen = {}
-    exact_results = []
+    exact_seen: dict[tuple, int] = {}
+    exact_results: list[dict] = []
 
     for finding in findings:
         fingerprint = finding_fingerprint(
@@ -388,8 +397,8 @@ def deduplicate_findings(
                 )
             )
 
-    behavior_seen = {}
-    results = []
+    behavior_seen: dict[tuple, int] = {}
+    results: list[dict] = []
 
     for finding in exact_results:
         key = equivalent_behavior_key(
@@ -455,6 +464,24 @@ def process_findings(
         normalized
     )
 
-    return sort_findings(
+    results = sort_findings(
         deduplicated
     )
+
+    # P4-24: every processed finding carries the documented risk
+    # breakdown (``models.risk.finding_risk_breakdown``) so reporters,
+    # JSON output and state records can expose the components without
+    # recomputing the model at each call site.
+    for finding in results:
+        finding["risk"] = finding_risk_breakdown(
+            finding
+        )
+
+    logger.debug(
+        "Finding processor produced %d "
+        "finding(s) from %d raw finding(s)",
+        len(results),
+        len(findings),
+    )
+
+    return results

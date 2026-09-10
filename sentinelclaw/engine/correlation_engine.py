@@ -1,17 +1,136 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from copy import deepcopy
+from datetime import timedelta
 from typing import Any
 
+from sentinelclaw.config.constants import SEVERITY_RANK
+from sentinelclaw.config.settings import get_settings
+from sentinelclaw.engine.timeline_engine import parse_timestamp
 
-SEVERITY_RANK = {
-    "info": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
-}
+logger = logging.getLogger(
+    __name__
+)
+
+
+def _resolve_window(
+    window_hours: int | None,
+) -> int:
+    """
+    Resolve the correlation window, falling back to settings.
+
+    A caller-supplied window wins; otherwise the configured
+    ``correlation_window_hours`` setting is used.
+    """
+    if window_hours is not None:
+        return window_hours
+
+    return get_settings().correlation_window_hours
+
+
+def _filter_by_window(
+    group: list[dict],
+    window_hours: int | None,
+) -> list[dict]:
+    """
+    Keep only findings whose timestamps fall inside the correlation window.
+
+    The window is anchored at the earliest timestamped finding in the
+    group and extends ``window_hours`` into the future. Findings without
+    a parseable timestamp are always kept (backward compatibility); a
+    non-positive window disables time filtering entirely.
+    """
+    if (
+        window_hours is None
+        or window_hours <= 0
+    ):
+        return group
+
+    timestamped: list[
+        tuple[dict, Any]
+    ] = []
+    untimestamped: list[dict] = []
+
+    for finding in group:
+        timestamp = parse_timestamp(
+            finding.get("timestamp")
+        )
+
+        if timestamp is None:
+            untimestamped.append(
+                finding
+            )
+        else:
+            timestamped.append(
+                (
+                    finding,
+                    timestamp,
+                )
+            )
+
+    if not timestamped:
+        return group
+
+    anchor = min(
+        timestamp
+        for _, timestamp in timestamped
+    )
+
+    limit = anchor + timedelta(
+        hours=window_hours
+    )
+
+    within = [
+        finding
+        for finding, timestamp in timestamped
+        if timestamp <= limit
+    ]
+
+    return within + untimestamped
+
+
+def _incident_time_bounds(
+    findings: list[dict],
+) -> tuple[
+    str | None,
+    str | None,
+]:
+    """
+    Return (first_seen, last_seen) ISO timestamps for an incident.
+
+    Bounds are the min/max of member finding timestamps. When no
+    member carries a parseable timestamp both values are ``None`` and
+    the keys are omitted from the incident (existing tests rely on
+    untimestamped findings and must not gain spurious bounds).
+    """
+    parsed: list[Any] = []
+
+    for finding in findings:
+        timestamp = parse_timestamp(
+            finding.get("timestamp")
+        )
+
+        if timestamp is not None:
+            parsed.append(
+                timestamp
+            )
+
+    if not parsed:
+        return (
+            None,
+            None,
+        )
+
+    return (
+        min(
+            parsed
+        ).isoformat(),
+        max(
+            parsed
+        ).isoformat(),
+    )
 
 
 def highest_severity(
@@ -176,7 +295,11 @@ def create_incident(
     related_pids: list[int] | None = None,
     related_ips: list[str] | None = None,
 ) -> dict:
-    return {
+    first_seen, last_seen = _incident_time_bounds(
+        findings
+    )
+
+    incident = {
         "incident_id": incident_id,
         "title": title,
         "description": description,
@@ -212,10 +335,21 @@ def create_incident(
         ),
     }
 
+    if first_seen is not None:
+        incident["first_seen"] = first_seen
+        incident["last_seen"] = last_seen
+
+    return incident
+
 
 def correlate_process_activity(
     findings: list[dict],
+    window_hours: int | None = None,
 ) -> list[dict]:
+    window = _resolve_window(
+        window_hours
+    )
+
     incidents = []
 
     grouped = defaultdict(
@@ -237,6 +371,11 @@ def correlate_process_activity(
     counter = 1
 
     for pid, group in grouped.items():
+        group = _filter_by_window(
+            group,
+            window,
+        )
+
         if len(group) < 2:
             continue
 
@@ -304,7 +443,12 @@ def correlate_process_activity(
 
 def correlate_network_process(
     findings: list[dict],
+    window_hours: int | None = None,
 ) -> list[dict]:
+    window = _resolve_window(
+        window_hours
+    )
+
     incidents = []
 
     process_findings = defaultdict(
@@ -389,10 +533,23 @@ def correlate_network_process(
             ]
         )
 
+        process_group = _filter_by_window(
+            process_group,
+            window,
+        )
+
+        network_group = _filter_by_window(
+            network_group,
+            window,
+        )
+
         combined = (
             process_group
             + network_group
         )
+
+        if not combined:
+            continue
 
         significant = any(
             (
@@ -454,7 +611,12 @@ def correlate_network_process(
 
 def correlate_mitre_chain(
     findings: list[dict],
+    window_hours: int | None = None,
 ) -> list[dict]:
+    window = _resolve_window(
+        window_hours
+    )
+
     technique_map = defaultdict(
         list
     )
@@ -529,6 +691,14 @@ def correlate_mitre_chain(
             finding
         )
 
+    unique = _filter_by_window(
+        unique,
+        window,
+    )
+
+    if not unique:
+        return []
+
     return [
         create_incident(
             incident_id="INC-MITRE-001",
@@ -545,7 +715,7 @@ def correlate_mitre_chain(
             related_pids=[
                 finding.get(
                     "pid"
-                )
+                )  # type: ignore[misc]  # pid is an optional field on heterogeneous finding dicts
                 for finding in unique
                 if finding.get(
                     "pid"
@@ -555,7 +725,7 @@ def correlate_mitre_chain(
             related_ips=[
                 finding.get(
                     "remote_ip"
-                )
+                )  # type: ignore[misc]  # remote_ip is an optional field on heterogeneous finding dicts
                 for finding in unique
                 if finding.get(
                     "remote_ip"
@@ -603,27 +773,40 @@ def deduplicate_incidents(
 
 def correlate_findings(
     findings: list[dict],
+    window_hours: int | None = None,
 ) -> list[dict]:
     incidents = []
 
     incidents.extend(
         correlate_process_activity(
-            findings
+            findings,
+            window_hours,
         )
     )
 
     incidents.extend(
         correlate_network_process(
-            findings
+            findings,
+            window_hours,
         )
     )
 
     incidents.extend(
         correlate_mitre_chain(
-            findings
+            findings,
+            window_hours,
         )
     )
 
-    return deduplicate_incidents(
+    incidents = deduplicate_incidents(
         incidents
     )
+
+    logger.debug(
+        "Correlation engine produced "
+        "%d incident(s) from %d finding(s)",
+        len(incidents),
+        len(findings),
+    )
+
+    return incidents

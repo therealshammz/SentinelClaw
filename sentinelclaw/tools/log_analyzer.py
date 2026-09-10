@@ -1,21 +1,224 @@
 import argparse
 import json
+import logging
+import re
 from pathlib import Path
 
+logger = logging.getLogger(
+    __name__
+)
 
-SUSPICIOUS_KEYWORDS = [
-    "failed login",
-    "authentication failed",
-    "unauthorized",
-    "access denied",
-    "malware",
-    "ransomware",
-    "powershell",
-    "encodedcommand",
-    "mimikatz",
-    "brute force",
-    "privilege escalation",
-]
+KEYWORD_CLASSES: dict[
+    str,
+    tuple[str, str, str],
+] = {
+    "failed login": (
+        "authentication",
+        "failed_login",
+        "low",
+    ),
+    "failed password": (
+        "authentication",
+        "failed_login",
+        "low",
+    ),
+    "authentication failed": (
+        "authentication",
+        "failed_login",
+        "low",
+    ),
+    "unauthorized": (
+        "authentication",
+        "unauthorized_access",
+        "low",
+    ),
+    "access denied": (
+        "authentication",
+        "access_denied",
+        "info",
+    ),
+    "malware": (
+        "generic",
+        "malware_indicator",
+        "info",
+    ),
+    "ransomware": (
+        "generic",
+        "malware_indicator",
+        "info",
+    ),
+    "powershell": (
+        "execution",
+        "script_execution",
+        "medium",
+    ),
+    "encodedcommand": (
+        "execution",
+        "obfuscated_command",
+        "high",
+    ),
+    "mimikatz": (
+        "credential_access",
+        "credential_dumping",
+        "high",
+    ),
+    "brute force": (
+        "authentication",
+        "brute_force",
+        "medium",
+    ),
+    "privilege escalation": (
+        "privilege_escalation",
+        "privilege_escalation",
+        "medium",
+    ),
+    "reverse shell": (
+        "command_and_control",
+        "reverse_shell",
+        "high",
+    ),
+    "port scan": (
+        "reconnaissance",
+        "port_scan",
+        "low",
+    ),
+    "scheduled task": (
+        "persistence",
+        "scheduled_task",
+        "medium",
+    ),
+}
+
+SUSPICIOUS_KEYWORDS = list(
+    KEYWORD_CLASSES
+)
+
+_TIMESTAMP_PATTERN = re.compile(
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
+    r"(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?"
+)
+
+_IP_PATTERN = re.compile(
+    r"\b(?:\d{1,3}\.){3}\d{1,3}\b"
+)
+
+_SSH_FAILED_PATTERN = re.compile(
+    r"failed\s+(?:password|login|authentication)\s+"
+    r"for\s+(\S+)\s+from\s+([0-9A-Fa-f:.]+)",
+    re.IGNORECASE,
+)
+
+_USER_PATTERN = re.compile(
+    r"(?:user|username)\s*[=:]\s*(\S+)",
+    re.IGNORECASE,
+)
+
+_HOST_PATTERN = re.compile(
+    r"(?:host(?:name)?|computer)\s*[=:]\s*"
+    r"([A-Za-z0-9._-]+)",
+    re.IGNORECASE,
+)
+
+
+def detect_source(message: str) -> str:
+    lower = message.lower()
+
+    if "sshd" in lower:
+        return "ssh"
+
+    if "sudo" in lower:
+        return "sudo"
+
+    if "cron" in lower:
+        return "cron"
+
+    if "systemd" in lower:
+        return "systemd"
+
+    if "auth" in lower:
+        return "auth"
+
+    return "unknown"
+
+
+def extract_timestamp(line: str) -> str | None:
+    match = _TIMESTAMP_PATTERN.search(
+        line
+    )
+
+    if match is None:
+        return None
+
+    timestamp = match.group(0).strip()
+    timestamp = timestamp.replace(" ", "T")
+    timestamp = timestamp.replace(",", ".")
+
+    return timestamp
+
+
+def build_event(
+    line_number: int,
+    line: str,
+    matched_keywords: list[str],
+) -> dict:
+    message = line.strip()
+
+    event_class, event_type, severity_hint = (
+        KEYWORD_CLASSES[matched_keywords[0]]
+    )
+
+    ip = None
+    username = None
+
+    ssh_failed = _SSH_FAILED_PATTERN.search(
+        line
+    )
+
+    if ssh_failed:
+        username = ssh_failed.group(1)
+        ip = ssh_failed.group(2)
+    else:
+        ip_match = _IP_PATTERN.search(
+            line
+        )
+
+        if ip_match:
+            ip = ip_match.group(0)
+
+        user_match = _USER_PATTERN.search(
+            line
+        )
+
+        if user_match:
+            username = user_match.group(1)
+
+    host_match = _HOST_PATTERN.search(
+        line
+    )
+
+    host = (
+        host_match.group(1)
+        if host_match
+        else None
+    )
+
+    return {
+        "timestamp": extract_timestamp(
+            line
+        ),
+        "source": detect_source(
+            message
+        ),
+        "event_type": event_type,
+        "event_class": event_class,
+        "message": message,
+        "severity_hint": severity_hint,
+        "matched_keywords": matched_keywords,
+        "ip": ip,
+        "host": host,
+        "username": username,
+        "line_number": line_number,
+    }
 
 
 def analyze_log_file(file_path: str) -> dict:
@@ -32,6 +235,7 @@ def analyze_log_file(file_path: str) -> dict:
         }
 
     matches = []
+    events = []
     total_lines = 0
 
     with path.open("r", encoding="utf-8", errors="ignore") as log_file:
@@ -54,11 +258,30 @@ def analyze_log_file(file_path: str) -> dict:
                     }
                 )
 
+                events.append(
+                    build_event(
+                        line_number,
+                        line,
+                        matched_keywords,
+                    )
+                )
+
+    logger.debug(
+        "Analyzed log %s: %d line(s), "
+        "%d suspicious match(es), "
+        "%d structured event(s)",
+        path.name,
+        total_lines,
+        len(matches),
+        len(events),
+    )
+
     return {
         "file": str(path),
         "total_lines": total_lines,
         "suspicious_matches": len(matches),
         "matches": matches,
+        "events": events,
     }
 
 

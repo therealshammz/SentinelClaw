@@ -1,5 +1,5 @@
+# Legacy requirements file. pyproject.toml is the canonical source of
+# dependency metadata; keep this list in sync when changing runtime deps.
 psutil>=6.0.0
-pytest>=8.0.0
-pywin32>=311
+pywin32>=311; platform_system == 'Windows'
 PyYAML>=6.0.2
-scapy>=2.6.0

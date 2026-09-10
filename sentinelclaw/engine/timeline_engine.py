@@ -1,16 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from sentinelclaw.config.constants import SEVERITY_RANK
 
-SEVERITY_RANK = {
-    "critical": 5,
-    "high": 4,
-    "medium": 3,
-    "low": 2,
-    "info": 1,
-}
+logger = logging.getLogger(
+    __name__
+)
 
 
 TIMESTAMP_FIELDS = (
@@ -87,6 +85,9 @@ def parse_timestamp(
 
     else:
         return None
+
+    # mypy cannot narrow dt across the if/elif join above.
+    assert dt is not None
 
     if dt.tzinfo is None:
         dt = dt.replace(
@@ -438,6 +439,14 @@ def build_timeline(
                 "",
             ),
         )
+    )
+
+    logger.debug(
+        "Timeline engine built %d event(s) "
+        "from %d finding(s) and %d incident(s)",
+        len(timeline),
+        len(findings),
+        len(incidents or []),
     )
 
     return timeline

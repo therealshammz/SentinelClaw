@@ -1,4 +1,10 @@
-from pathlib import Path
+import logging
+
+from sentinelclaw.config.settings import get_settings
+
+logger = logging.getLogger(
+    __name__
+)
 
 
 EXECUTABLE_EXTENSIONS = {
@@ -42,7 +48,7 @@ def analyze_file_findings(
     file_info: dict,
 ) -> list[dict]:
 
-    findings = []
+    findings: list[dict] = []
 
     if "error" in file_info:
         return findings
@@ -63,9 +69,8 @@ def analyze_file_findings(
     ).lower()
 
     entropy = file_info.get(
-        "entropy",
-        0.0,
-    )
+        "entropy"
+    ) or 0.0
 
     authenticode = (
         file_info.get("authenticode")
@@ -154,7 +159,8 @@ def analyze_file_findings(
 
     if (
         file_info.get("is_pe_file")
-        and entropy >= 7.2
+        and entropy
+        >= get_settings().file_entropy_threshold
     ):
         findings.append(
             {
@@ -190,5 +196,10 @@ def analyze_file_findings(
                 },
             }
         )
+
+    logger.debug(
+        "File detector produced %d finding(s)",
+        len(findings),
+    )
 
     return findings

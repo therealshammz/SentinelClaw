@@ -26,6 +26,24 @@ def get_rules_directory() -> Path:
     return PACKAGE_DIRECTORY / "rules"
 
 
+def get_yara_rules_directory() -> Path:
+    """
+    Return SentinelClaw's optional YARA rules directory.
+
+    SENTINELCLAW_YARA_RULES_DIR can override the default location.
+
+    Unlike the detection rules above, YARA rules live only inside the
+    package (``sentinelclaw/rules/yara/``); they are not part of the
+    twin-copy sync used for the YAML rule trees.
+    """
+    override = os.environ.get("SENTINELCLAW_YARA_RULES_DIR")
+
+    if override:
+        return Path(override).expanduser().resolve()
+
+    return PACKAGE_DIRECTORY / "rules" / "yara"
+
+
 def get_report_directory() -> Path:
     """
     Return the directory used for generated reports.

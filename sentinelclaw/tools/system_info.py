@@ -1,14 +1,23 @@
 import json
+import logging
 import platform
 import socket
 
 import psutil
 
+logger = logging.getLogger(
+    __name__
+)
+
 
 def get_system_info() -> dict:
+    logger.debug(
+        "Collecting system information..."
+    )
+
     memory = psutil.virtual_memory()
 
-    return {
+    info = {
         "hostname": socket.gethostname(),
         "operating_system": platform.system(),
         "os_release": platform.release(),
@@ -22,6 +31,14 @@ def get_system_info() -> dict:
         "ram_usage_percent": memory.percent,
         "boot_time": psutil.boot_time(),
     }
+
+    logger.debug(
+        "Collected system information "
+        "for %s",
+        info.get("hostname"),
+    )
+
+    return info
 
 
 def main() -> None:

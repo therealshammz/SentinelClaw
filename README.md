@@ -16,18 +16,23 @@ SentinelClaw can optionally use a locally running **Qwen model through Ollama** 
 - Running process analysis
 - Network connection analysis
 - Windows Security Event Log analysis
+- Offline EVTX log analysis
 - File security analysis
 - Text log analysis
 - Offline PCAP analysis
 - YAML-based detection rules
+- SigmaHQ rule import
 - Finding normalization and deduplication
 - Incident correlation
 - Security timeline generation
+- Scan-state history and hunting commands
 - Risk scoring
 - MITRE ATT&CK mappings
-- JSON, text, and HTML reports
+- JSON, text, HTML, CSV, and JSONL reports
 - Optional local Qwen analysis through Ollama
 - Terminal security dashboard
+- Plugin API (entry-point based)
+- Standalone binary packaging (PyInstaller)
 - OpenClaw integration
 - No cloud dependency for core detection
 
@@ -105,15 +110,15 @@ Create a virtual environment:
 ### Windows PowerShell
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+python -m venv venv
+venv\Scripts\Activate.ps1
 ```
 
 ### Linux
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 Upgrade pip:
@@ -136,7 +141,13 @@ sentinelclaw --help
 
 ---
 
-## Optional PCAP Support
+## Optional Extras
+
+SentinelClaw ships as a lean core. Optional analysis features are
+installed through package extras; a missing extra disables only the
+related collectors, never the core pipeline.
+
+### PCAP Support
 
 PCAP analysis uses Scapy.
 
@@ -155,6 +166,37 @@ sentinelclaw pcap path/to/capture.pcap
 SentinelClaw performs offline PCAP analysis and does not require packet capture privileges for existing capture files.
 
 Depending on the operating system and Scapy configuration, additional packet-capture components may be required for functionality beyond SentinelClaw's offline analysis workflow.
+
+### EVTX Support
+
+Offline Windows Event Log (.evtx) analysis uses python-evtx:
+
+```bash
+python -m pip install -e ".[evtx]"
+sentinelclaw evtx path/to/file.evtx
+```
+
+### YARA Support
+
+YARA rule scanning for the `file` command uses yara-python:
+
+```bash
+python -m pip install -e ".[yara]"
+```
+
+YARA rules are loaded from the packaged `sentinelclaw/rules/yara/`
+directory (overridable with `SENTINELCLAW_YARA_RULES_DIR`).
+
+Extras can be combined, for example:
+
+```bash
+python -m pip install -e ".[pcap,evtx,yara]"
+```
+
+### Build Extra
+
+`.[build]` installs PyInstaller for producing standalone binaries; see
+the [Packaging](#standalone-binaries) section.
 
 ---
 
@@ -228,6 +270,37 @@ sentinelclaw rules
 
 ## Commands
 
+Command reference (run any command with `--help` for the live
+definition; the global `--debug` flag shows Python tracebacks):
+
+| Command | Purpose | Arguments / flags |
+| --- | --- | --- |
+| `system` | Show system information | |
+| `processes` | Show running processes | |
+| `network` | Show network connections | |
+| `windows-events` | Show monitored Windows Security events (Windows, admin) | |
+| `evtx` | Analyze an offline `.evtx` log | `path`, `--json`, `--verbose` |
+| `scan` | Run the complete scan, print machine-readable JSON | `--format json\|jsonl`, `--json-raw`, `--since ISO`, `--last` |
+| `dashboard` | Run scan, display the security console | `--verbose` |
+| `summary` | Run scan, show compact security summary | `--verbose` |
+| `watch` | Loop scans, record state, print finding deltas | `--interval N`, `--count N` |
+| `report` | Generate report files | `--format json\|text\|html\|csv\|jsonl\|all`, `--json-raw` |
+| `rules` | Show loaded detection rules | subcommand `import` |
+| `rules import` | Import SigmaHQ rules | `--source`, `--release`, `--dest` |
+| `incidents` | Run scan, show correlated incidents | `--verbose` |
+| `timeline` | Run scan, show chronological timeline | |
+| `history` | List scan-state records | |
+| `diff` | Show new/closed findings between records | `[id1 id2]`, `--last` |
+| `search` | Search findings/incidents in scan state | `keyword`, `--state ID` |
+| `accounts` | Summarize logon activity from scan state | |
+| `tree` | Render an incident's process tree | `incident_id` |
+| `stats` | Event-ID / finding-count statistics | |
+| `investigate` | Run scan, optional local Qwen analysis | `--model NAME` |
+| `logs` | Analyze a text log file | `file`, `--json`, `--verbose` |
+| `file` | Analyze a file or directory | `path`, `--json`, `--verbose` |
+| `pcap` | Analyze a PCAP/PCAPNG capture | `path`, `--json`, `--verbose` |
+| `sample-plugin` | Demo of the plugin API | |
+
 ### System Information
 
 ```bash
@@ -284,6 +357,21 @@ Access to the Windows Security log may require Administrator privileges.
 
 If access is denied, launch PowerShell, Windows Terminal, or VS Code as Administrator and run SentinelClaw again.
 
+### Offline EVTX Analysis
+
+```bash
+sentinelclaw evtx path/to/file.evtx
+```
+
+Analyzes an offline Windows Event Log file without a live event-log
+connection. Requires the `evtx` extra.
+
+Machine-readable output:
+
+```bash
+sentinelclaw evtx path/to/file.evtx --json
+```
+
 ### Text Log Analysis
 
 ```bash
@@ -291,6 +379,10 @@ sentinelclaw logs path/to/file.log
 ```
 
 Analyzes supported text log input.
+
+```bash
+sentinelclaw logs path/to/file.log --json --verbose
+```
 
 ### File Analysis
 
@@ -334,6 +426,33 @@ PCAP analysis includes:
 - High-volume flow indicators
 
 PCAP findings represent investigation signals rather than automatic proof of compromise.
+
+### Scan State & Hunting Commands
+
+`scan` persists a bounded record of every run (see
+[State Store](#state-store)). The hunting commands query those records:
+
+```bash
+sentinelclaw history                      # list scan records
+sentinelclaw diff --last                  # new/closed findings vs previous scan
+sentinelclaw diff <id1> <id2>             # ... between two records
+sentinelclaw search powershell            # keyword search across records
+sentinelclaw accounts                     # logon activity summary
+sentinelclaw stats                        # Event-ID / finding-count statistics
+sentinelclaw tree <incident_id>           # process tree for an incident
+sentinelclaw watch                        # loop scans, print finding deltas
+```
+
+`scan` also reports deltas against an explicit baseline:
+
+```bash
+sentinelclaw scan --since 2026-01-01T00:00:00Z
+sentinelclaw scan --last                  # delta vs the previous record
+sentinelclaw scan --format jsonl          # one JSON object per line
+```
+
+`watch` accepts `--interval N` (seconds between scans) and `--count N`
+(0 = until interrupted).
 
 ---
 
@@ -401,6 +520,29 @@ conditions:
 ```
 
 Rules should identify observable security indicators rather than assume malicious intent without supporting evidence.
+
+List the loaded rules:
+
+```bash
+sentinelclaw rules
+```
+
+### SigmaHQ Import
+
+`rules import` converts SigmaHQ rules into SentinelClaw's internal
+format. By default it downloads the pinned SigmaHQ release; pass a
+local checkout or release zip with `--source` to convert offline:
+
+```bash
+sentinelclaw rules import                                  # downloads pinned release
+sentinelclaw rules import --source /path/to/sigma          # offline conversion
+sentinelclaw rules import --release r2026-07-01            # pin a release tag
+sentinelclaw rules import --dest /path/to/rules            # explicit destination
+```
+
+The release tag can also be set with `SENTINELCLAW_SIGMA_RELEASE`.
+Imported rules are written into a `sigma/` tree inside the rule
+directory and are listed by `sentinelclaw rules`.
 
 ---
 
@@ -486,9 +628,12 @@ SentinelClaw supports:
 JSON
 Text
 HTML
+CSV
+JSONL
 ```
 
-Generate a specific format:
+`report` with no arguments defaults to `--format all`, which writes
+JSON, text, and HTML. Generate a specific format:
 
 ```bash
 sentinelclaw report --format html
@@ -499,8 +644,13 @@ Other examples:
 ```bash
 sentinelclaw report --format json
 sentinelclaw report --format text
+sentinelclaw report --format csv
+sentinelclaw report --format jsonl
 sentinelclaw report --format all
 ```
+
+`--json-raw` embeds raw collector dumps (processes, network
+connections, Windows events) into the JSON report.
 
 Reports include security assessment information such as:
 
@@ -623,29 +773,96 @@ AI output is advisory.
 
 ---
 
-## Environment Variables
+## Configuration
 
-SentinelClaw supports path overrides using environment variables.
+SentinelClaw resolves settings with the following precedence (lowest
+to highest):
 
-### Detection Rules
+1. Built-in defaults.
+2. An optional TOML configuration file.
+3. `SENTINELCLAW_*` environment variables (environment wins).
+
+TOML discovery order (first existing file wins):
+
+1. `SENTINELCLAW_CONFIG` environment variable, when set.
+2. `./sentinelclaw.toml` in the current working directory.
+3. `~/.config/sentinelclaw/config.toml`.
+
+A missing configuration file is not an error; built-in defaults apply.
+
+### Environment Variables
+
+Common path overrides:
 
 ```text
-SENTINELCLAW_RULES_DIR
+SENTINELCLAW_RULES_DIR      detection rules directory
+SENTINELCLAW_REPORT_DIR     report output directory
+SENTINELCLAW_DATA_DIR       scan-state store and data directory
+SENTINELCLAW_YARA_RULES_DIR YARA rules directory
+SENTINELCLAW_SIGMA_RELEASE  SigmaHQ release tag for `rules import`
+SENTINELCLAW_CONFIG         path to the TOML config file
 ```
 
-### Reports
+The full settings table (every `SENTINELCLAW_*` variable and its TOML
+key) is documented in the module docstring of
+`sentinelclaw/config/settings.py` -- that table is the source of truth.
 
-```text
-SENTINELCLAW_REPORT_DIR
+---
+
+## State Store
+
+Each `scan` (and `watch`) appends a bounded record to the local
+scan-state store, one JSON object per line in `scans.jsonl` under the
+resolved data directory (default `./data`, override with
+`SENTINELCLAW_DATA_DIR`). The hunting commands -- `history`, `diff`,
+`search`, `accounts`, `tree`, `stats` -- read these records. The store
+is purely local and read-only with respect to the target system.
+
+---
+
+## Plugins
+
+External packages can contribute commands through the
+`sentinelclaw.detectors` entry-point group. A plugin module exposes
+`register(subparsers)`, `handle(args)`, and an optional `COMMANDS`
+tuple. Discovery is best-effort: a broken plugin is logged and skipped
+without affecting built-in commands.
+
+The built-in `sample-plugin` command demonstrates the API:
+
+```bash
+sentinelclaw sample-plugin
 ```
 
-### Data
+Example entry point in a plugin's `pyproject.toml`:
 
-```text
-SENTINELCLAW_DATA_DIR
+```toml
+[project.entry-points."sentinelclaw.detectors"]
+myplugin = "myplugin"
 ```
 
-These can be used when integrating SentinelClaw into custom environments.
+---
+
+## Standalone Binaries
+
+Standalone, OS-native binaries are built with PyInstaller (the
+`[build]` extra). See `packaging/README.md` for the full build and
+release-signing process:
+
+```bash
+# Linux / macOS
+scripts/build_binary.sh
+
+# Windows (PowerShell)
+.\scripts\build_binary.ps1
+```
+
+The CI `build` job builds on `ubuntu-latest` and `windows-latest` and
+uploads `dist/sentinelclaw` / `dist/sentinelclaw.exe` as artifacts, so
+a Windows binary is available even when developing on Linux. Binary
+signing (Authenticode / codesign / GPG) is a release-time step; see
+`packaging/README.md`. Versions are bumped with
+`scripts/bump_version.py` before tagging a release.
 
 ---
 
@@ -665,9 +882,9 @@ Example:
 .\sentinelclaw.bat dashboard
 ```
 
-If the project's virtual environment exists, the launcher uses it automatically.
-
-Otherwise it attempts to use the system Python installation.
+The launcher uses the project's `venv` if present, falling back to
+`.venv`. If neither exists it prints a clear error instead of falling
+back to a possibly-unconfigured system Python.
 
 After package installation, the preferred command is:
 
@@ -703,18 +920,25 @@ SentinelClaw/
 │
 ├── sentinelclaw/
 │   ├── ai/
+│   ├── commands/       # CLI command modules (P6-30)
 │   ├── config/
 │   ├── detectors/
 │   ├── engine/
 │   ├── models/
+│   ├── plugins/        # entry-point plugin discovery + sample plugin
 │   ├── reporting/
+│   ├── rules/          # packaged rule trees (yaml, sigma, yara)
+│   ├── sigma/          # SigmaHQ importer/reader
+│   ├── state/          # scan-state store + hunting commands
 │   ├── tools/
 │   ├── ui/
 │   └── utils/
 │
-├── rules/
+├── rules/              # detection-rule source of truth (synced to package)
+├── packaging/          # PyInstaller spec + packaging docs
+├── scripts/            # sync_rules, bump_version, build_binary
 ├── tests/
-├── data/
+├── data/               # scan-state store and sample data
 ├── reports/
 ├── openclaw/
 │
@@ -788,6 +1012,7 @@ Current limitations may include:
 - Local AI output can contain incorrect interpretations.
 - AI-generated conclusions must be validated against deterministic evidence.
 - Platform-specific collectors may not be available on every operating system.
+- UI strings are English-only (internationalization is deferred; see `ui/console.py`).
 
 ---
 
@@ -817,8 +1042,11 @@ System collection
 Process analysis
 Network analysis
 Windows Event Log analysis
+EVTX analysis
 File analysis
 YAML detection rules
+SigmaHQ rule import
+Scan-state history and hunting
 Finding normalization
 Incident correlation
 Timeline reconstruction
@@ -826,6 +1054,8 @@ Local Qwen integration
 PCAP analysis
 Terminal dashboard
 Report generation
+Plugin API
+Standalone binaries
 Automated testing
 OpenClaw integration
 ```

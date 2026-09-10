@@ -1,11 +1,20 @@
 import hashlib
 import json
+import logging
 import math
 import mimetypes
 import os
 import subprocess
 from collections import Counter
 from pathlib import Path
+
+from sentinelclaw.config.settings import get_settings
+
+logger = logging.getLogger(
+    __name__
+)
+
+ENTROPY_CHUNK_SIZE = 1024 * 1024
 
 
 def calculate_sha256(path: Path) -> str:
@@ -19,16 +28,26 @@ def calculate_sha256(path: Path) -> str:
 
 
 def calculate_entropy(path: Path) -> float:
+    byte_counts: Counter[int] = Counter()
+    length = 0
+
     try:
-        data = path.read_bytes()
-    except OSError:
+        with path.open("rb") as file:
+            while chunk := file.read(ENTROPY_CHUNK_SIZE):
+                byte_counts.update(chunk)
+                length += len(chunk)
+    except OSError as exc:
+        logger.warning(
+            "Unable to read %s for entropy "
+            "calculation: %s",
+            path,
+            exc,
+        )
+
         return 0.0
 
-    if not data:
+    if length == 0:
         return 0.0
-
-    byte_counts = Counter(data)
-    length = len(data)
 
     entropy = 0.0
 
@@ -43,7 +62,13 @@ def is_pe_file(path: Path) -> bool:
     try:
         with path.open("rb") as file:
             return file.read(2) == b"MZ"
-    except OSError:
+    except OSError as exc:
+        logger.debug(
+            "Unable to probe PE signature for %s: %s",
+            path,
+            exc,
+        )
+
         return False
 
 
@@ -106,6 +131,118 @@ def get_authenticode_status(path: Path) -> dict:
         }
 
 
+def get_pe_details(path: Path) -> dict | None:
+    """Parse import/section/entry-point details from a PE file.
+
+    Uses the optional ``pefile`` package (Windows-only extra). Returns
+    ``None`` when pefile is unavailable, the file cannot be parsed as
+    a PE, or the platform is not Windows -- callers treat ``None`` as
+    "details not available" rather than an error.
+    """
+    try:
+        import pefile
+    except ImportError:
+        return None
+
+    try:
+        pe = pefile.PE(
+            str(path),
+            fast_load=True,
+        )
+    except Exception as exc:
+        logger.debug(
+            "Unable to parse PE details for %s: %s",
+            path,
+            exc,
+        )
+
+        return None
+
+    try:
+        entry_point = int(
+            pe.OPTIONAL_HEADER.AddressOfEntryPoint
+        )
+
+        sections = []
+
+        for section in pe.sections:
+            name = (
+                section.Name.decode(
+                    "utf-8",
+                    errors="replace",
+                )
+            ).rstrip("\x00")
+
+            sections.append(
+                {
+                    "name": name,
+                    "virtual_size": int(
+                        section.Misc_VirtualSize
+                    ),
+                    "raw_size": int(
+                        section.SizeOfRawData
+                    ),
+                }
+            )
+
+        imports: list[dict] = []
+
+        try:
+            pe.parse_data_directories(
+                directories=[
+                    pefile.DIRECTORY_ENTRY[
+                        "IMAGE_DIRECTORY_ENTRY_IMPORT"
+                    ]
+                ]
+            )
+        except Exception as exc:
+            logger.debug(
+                "Unable to parse PE imports for %s: %s",
+                path,
+                exc,
+            )
+
+        for entry in getattr(
+            pe,
+            "DIRECTORY_ENTRY_IMPORT",
+            [],
+        )[:64]:
+            symbols = []
+
+            for symbol in entry.imports[:256]:
+                if symbol.name is None:
+                    continue
+
+                symbols.append(
+                    symbol.name.decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+
+            if symbols:
+                imports.append(
+                    {
+                        "dll": entry.dll.decode(
+                            "utf-8",
+                            errors="replace",
+                        ),
+                        "symbols": symbols,
+                    }
+                )
+
+        return {
+            "entry_point": entry_point,
+            "sections": sections,
+            "imports": imports,
+        }
+    finally:
+        try:
+            pe.close()
+        except Exception:
+            pass
+
+
 def analyze_file(file_path: str) -> dict:
     path = Path(file_path).expanduser()
 
@@ -130,6 +267,8 @@ def analyze_file(file_path: str) -> dict:
 
     pe_file = is_pe_file(path)
 
+    max_size = get_settings().max_file_analysis_size
+
     result = {
         "path": str(path.resolve()),
         "name": path.name,
@@ -140,14 +279,44 @@ def analyze_file(file_path: str) -> dict:
             3,
         ),
         "mime_type": mime_type,
-        "sha256": calculate_sha256(path),
-        "entropy": calculate_entropy(path),
+        "sha256": None,
+        "entropy": None,
         "is_pe_file": pe_file,
         "authenticode": None,
+        "pe_details": None,
     }
+
+    if stat.st_size > max_size:
+        result["skipped"] = True
+        result["skipped_reason"] = "too large"
+
+        logger.info(
+            "Skipping full analysis of %s "
+            "(%d bytes exceeds %d byte limit)",
+            path.name,
+            stat.st_size,
+            max_size,
+        )
+    else:
+        result["sha256"] = calculate_sha256(path)
+        result["entropy"] = calculate_entropy(path)
 
     if os.name == "nt" and pe_file:
         result["authenticode"] = get_authenticode_status(path)
+
+    if (
+        os.name == "nt"
+        and pe_file
+        and not result.get("skipped")
+    ):
+        result["pe_details"] = get_pe_details(path)
+
+    logger.debug(
+        "Analyzed %s (%d bytes, entropy %.4f)",
+        path.name,
+        stat.st_size,
+        result.get("entropy", 0.0),
+    )
 
     return result
 

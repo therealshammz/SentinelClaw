@@ -1,0 +1,31 @@
+rules:
+- id: c2b84f39-4e6e-4b99-9a1f-77c30a1b3c11
+  title: Network connection to suspicious remote port
+  description: A process established a connection to a remote port commonly associated with reverse shells
+    or staging backdoors. Converted from a Sigma network_connection rule (sample shipped with the P2-14
+    sigma layer).
+  category: network
+  os:
+  - windows
+  severity: medium
+  confidence: medium
+  status: experimental
+  enabled: true
+  falsepositives:
+  - Legitimate tooling that happens to use these ports.
+  author: SentinelClaw Sigma samples
+  date: '2026-09-09'
+  tags:
+  - attack.command_and_control
+  - attack.t1071
+  mitre:
+    technique: T1071
+  sigma_logsource:
+    category: network_connection
+    product: windows
+  conditions:
+  - field: remote_address.port
+    operator: equals
+    value:
+    - 4444
+    - 5555

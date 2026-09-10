@@ -5,6 +5,7 @@ rules:
     category: file
     severity: medium
     confidence: medium
+    status: proven
     enabled: true
     match: all
 
@@ -28,6 +29,7 @@ rules:
     category: file
     severity: low
     confidence: low
+    status: proven
     enabled: true
     match: all
 
@@ -49,6 +51,7 @@ rules:
     category: file
     severity: low
     confidence: low
+    status: proven
     enabled: true
     match: all
 
@@ -73,6 +76,7 @@ rules:
     category: file
     severity: high
     confidence: high
+    status: proven
     enabled: true
     match: any
 

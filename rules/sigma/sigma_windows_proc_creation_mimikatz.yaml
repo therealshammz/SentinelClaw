@@ -1,0 +1,38 @@
+rules:
+  - id: 20255a30-2e1d-4f0e-8b2c-7f1b2f4a6b21
+    title: Mimikatz execution via process creation
+    description: >-
+      Detects mimikatz (or mimikatz-adjacent credential tooling) starting
+      on a Windows host. Converted from a Sigma process_creation rule
+      (sample shipped with the P2-14 sigma layer).
+    category: process
+    os:
+      - windows
+    severity: high
+    confidence: high
+    status: experimental
+    enabled: true
+    references:
+      - https://github.com/gentilkiwi/mimikatz
+    author: SentinelClaw Sigma samples
+    date: "2026-09-09"
+    tags:
+      - attack.credential_access
+      - attack.t1003.001
+    mitre:
+      technique: T1003.001
+    sigma_logsource:
+      category: process_creation
+      product: windows
+    conditions:
+      - field: executable
+        operator: endswith
+        value: mimikatz.exe
+      - field: command_line
+        operator: contains
+        value:
+          - "privilege::debug"
+          - "sekurlsa::logonpasswords"
+          - "sekurlsa::wdigest"
+          - "lsadump::"
+          - "kerberos::"
